@@ -18,7 +18,7 @@ export function KpiCards() {
         const Arrow = k.trend === "up" ? ArrowUpRight : ArrowDownRight;
         return (
           <Card key={k.label} className="flex flex-col gap-3.5 p-[18px] sm:px-[22px] sm:py-5">
-            <div className="flex items-center justify-between gap-3">
+            <div className="flex min-h-11 items-center justify-between gap-3">
               <div className="text-[14.5px] font-medium text-muted">{k.label}</div>
               <div className="grid size-10 shrink-0 place-items-center rounded-xl bg-tint text-navy">
                 <Icon size={20} strokeWidth={1.8} aria-hidden="true" />

@@ -1,0 +1,101 @@
+export const customerTypes = ["End User", "Distributor", "Company"] as const;
+export type CustomerType = (typeof customerTypes)[number];
+
+export type Customer = {
+  id: string;
+  type: CustomerType;
+  /** Full name for people, company name for companies. */
+  name: string;
+  account: string;
+  phone: string;
+  email: string;
+  location: string;
+  /** People only (End User, Distributor). */
+  firstName?: string;
+  lastName?: string;
+  /** Companies only. */
+  pin?: string;
+};
+
+export type FieldName =
+  | "firstName"
+  | "lastName"
+  | "companyName"
+  | "account"
+  | "phone"
+  | "email"
+  | "pin"
+  | "location";
+
+export type FieldDef = {
+  name: FieldName;
+  label: string;
+  type: "text" | "tel" | "email";
+  placeholder: string;
+  /** Spans both columns on wide screens. */
+  wide?: boolean;
+};
+
+const account: FieldDef = { name: "account", label: "Account", type: "text", placeholder: "e.g. ACC-1001 (no spaces)" };
+const phone: FieldDef = { name: "phone", label: "Phone Number", type: "tel", placeholder: "0712345678 or +254712345678" };
+const email: FieldDef = { name: "email", label: "Email", type: "email", placeholder: "name@example.com" };
+const location: FieldDef = { name: "location", label: "Location", type: "text", placeholder: "e.g. Westlands, Nairobi" };
+
+const person: FieldDef[] = [
+  { name: "firstName", label: "First Name", type: "text", placeholder: "Enter first name" },
+  { name: "lastName", label: "Last Name", type: "text", placeholder: "Enter last name" },
+  account,
+  phone,
+  email,
+  location,
+];
+
+/** The form fields for each customer type, in display order. */
+export const fieldsByType: Record<CustomerType, FieldDef[]> = {
+  "End User": person,
+  Distributor: person,
+  Company: [
+    { name: "companyName", label: "Company Name", type: "text", placeholder: "Enter company name", wide: true },
+    account,
+    phone,
+    email,
+    { name: "pin", label: "PIN", type: "text", placeholder: "Enter PIN" },
+    { ...location, wide: true },
+  ],
+};
+
+/** Placeholder rows to demonstrate the list. Not real data. */
+export const sampleCustomers: Customer[] = [
+  { id: "c1", type: "Company", name: "Savanna Logistics Ltd", account: "ACC-3001", phone: "+254700000101", email: "accounts@savanna-logistics.example", location: "Industrial Area, Nairobi", pin: "P000000001A" },
+  { id: "c2", type: "End User", name: "Wanjiru Mwangi", account: "ACC-1001", phone: "+254700000102", email: "wanjiru.mwangi@example.com", location: "Kilimani, Nairobi" },
+  { id: "c3", type: "Distributor", name: "Otieno Ochieng", account: "ACC-2001", phone: "+254700000103", email: "otieno.ochieng@example.com", location: "Kisumu" },
+  { id: "c4", type: "Company", name: "Rift Valley Haulage Ltd", account: "ACC-3002", phone: "+254700000104", email: "info@riftvalley-haulage.example", location: "Nakuru", pin: "P000000002B" },
+  { id: "c5", type: "End User", name: "Brian Kiptoo", account: "ACC-1002", phone: "+254700000105", email: "brian.kiptoo@example.com", location: "Eldoret" },
+  { id: "c6", type: "Distributor", name: "Fatuma Hassan", account: "ACC-2002", phone: "+254700000106", email: "fatuma.hassan@example.com", location: "Mombasa" },
+  { id: "c7", type: "Company", name: "Lakeview Transport", account: "ACC-3003", phone: "+254700000107", email: "office@lakeview-transport.example", location: "Kisumu", pin: "P000000003C" },
+  { id: "c8", type: "End User", name: "Grace Njeri", account: "ACC-1003", phone: "+254700000108", email: "grace.njeri@example.com", location: "Thika" },
+];
+
+/** Current values of a customer as form field values. */
+export function toFormValues(c: Customer): Partial<Record<FieldName, string>> {
+  if (c.type === "Company") {
+    return { companyName: c.name, account: c.account, phone: c.phone, email: c.email, pin: c.pin ?? "", location: c.location };
+  }
+  const [first, ...rest] = c.name.split(" ");
+  return {
+    firstName: c.firstName ?? first,
+    lastName: c.lastName ?? rest.join(" "),
+    account: c.account,
+    phone: c.phone,
+    email: c.email,
+    location: c.location,
+  };
+}
+
+/** Builds a customer from already-validated field values. */
+export function fromFormValues(id: string, type: CustomerType, v: Partial<Record<FieldName, string>>): Customer {
+  const get = (n: FieldName) => v[n] ?? "";
+  const base = { id, type, account: get("account"), phone: get("phone"), email: get("email"), location: get("location") };
+  if (type === "Company") return { ...base, name: get("companyName"), pin: get("pin") };
+  return { ...base, name: `${get("firstName")} ${get("lastName")}`, firstName: get("firstName"), lastName: get("lastName") };
+}
