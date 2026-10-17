@@ -29,9 +29,9 @@ export const sampleProducts: Product[] = [
 ];
 
 export const sampleSimCards: SimCard[] = [
-  { id: "s1", name: "Safaricom IoT Fleet 01", type: "Local IoT" },
-  { id: "s2", name: "Roaming Pack A", type: "International IoT" },
-  { id: "s3", name: "Prepaid Spare", type: "Prepaid" },
+  { id: "s1", name: "Safaricom", type: "Local IoT" },
+  { id: "s2", name: "Airtel", type: "International IoT" },
+  { id: "s3", name: "MTN", type: "Prepaid" },
 ];
 
 export const samplePlatforms: Platform[] = [

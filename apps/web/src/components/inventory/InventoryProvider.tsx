@@ -28,6 +28,8 @@ type InventoryStore = {
   addSimCard: (name: string, type: SimCardType) => void;
   addPlatform: (name: string) => void;
   addPurchase: (purchase: NewPurchase) => void;
+  /** Takes sold items out of stock. Purchase history is never changed. */
+  deductStock: (type: PurchaseItemType, id: string, quantity: number) => void;
   /** Quantity and latest buying price for an item, derived from the purchases. */
   stockOf: (type: PurchaseItemType, id: string) => StockEntry;
 };
@@ -48,7 +50,15 @@ export function InventoryProvider({ children }: { children: ReactNode }) {
   const seq = useRef(0);
   const nextId = useCallback((prefix: string) => `${prefix}-new-${++seq.current}`, []);
 
-  const stockOf = useMemo(() => buildStock(purchases), [purchases]);
+  // Quantities taken out by sales. Kept apart from the purchases so purchase history stays exactly as entered.
+  const [used, setUsed] = useState<Record<string, number>>({});
+  const stockOf = useMemo(() => {
+    const base = buildStock(purchases);
+    return (type: PurchaseItemType, id: string): StockEntry => {
+      const s = base(type, id);
+      return { ...s, quantity: s.quantity - (used[`${type}:${id}`] ?? 0) };
+    };
+  }, [purchases, used]);
 
   const store = useMemo<InventoryStore>(
     () => ({
@@ -62,6 +72,7 @@ export function InventoryProvider({ children }: { children: ReactNode }) {
       addProduct: (categoryId, model) => setProducts((p) => [{ id: nextId("p"), categoryId, model }, ...p]),
       addSimCard: (name, type) => setSimCards((p) => [{ id: nextId("s"), name, type }, ...p]),
       addPlatform: (name) => setPlatforms((p) => [newPlatform(nextId("pl"), name), ...p]),
+      deductStock: (type, id, quantity) => setUsed((p) => ({ ...p, [`${type}:${id}`]: (p[`${type}:${id}`] ?? 0) + quantity })),
       addPurchase: (purchase) => {
         const id = nextId("pu");
         setPurchases((p) => [{ ...purchase, id, items: purchase.items.map((i, n) => ({ ...i, id: `${id}-${n + 1}` })) }, ...p]);

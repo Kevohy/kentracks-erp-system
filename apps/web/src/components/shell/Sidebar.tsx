@@ -60,7 +60,7 @@ export function Sidebar({ open, onClose, closeButtonRef }: SidebarProps) {
           const Icon = item.icon;
           const hasChildren = !!item.children;
           const isOpen = hasChildren && expanded[item.id];
-          const selfActive = !!item.href && pathname === item.href;
+          const selfActive = !!item.href && (pathname === item.href || (item.href !== "/" && pathname.startsWith(`${item.href}/`)));
           const childActive = !!item.children?.some((c) => c.href === pathname);
           const rowClass = cn(
             "flex min-h-11 w-full items-center gap-3 rounded-[10px] px-3 text-left text-[15px] font-medium focus-visible:outline-sidebar-accent",

@@ -55,7 +55,7 @@ export function SimCardsView() {
         submitLabel="Save SIM Card"
         idPrefix="sim"
         fields={[
-          { name: "name", label: "SIM Card Name", kind: "text", placeholder: "Enter SIM card name", validate: validateSimCardName },
+          { name: "name", label: "SIM Card Name", kind: "text", placeholder: "e.g. Safaricom, Airtel, MTN", validate: validateSimCardName },
           {
             name: "type",
             label: "Type",
