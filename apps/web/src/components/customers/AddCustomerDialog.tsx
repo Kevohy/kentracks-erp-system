@@ -10,6 +10,7 @@ import {
   type CustomerType,
   type FieldName,
 } from "@/lib/customers";
+import { sanitizeAccountInput, sanitizePhoneInput, validateField } from "@/lib/customer-validation";
 
 type Values = Partial<Record<FieldName, string>>;
 
@@ -42,21 +43,35 @@ export function AddCustomerDialog({
 
   const fields = fieldsByType[type];
 
+  function change(name: FieldName, raw: string) {
+    const value = name === "account" ? sanitizeAccountInput(raw) : name === "phone" ? sanitizePhoneInput(raw) : raw;
+    setValues((p) => ({ ...p, [name]: value }));
+    if (errors[name]) setErrors((p) => ({ ...p, [name]: undefined }));
+  }
+
+  function blur(name: FieldName) {
+    const raw = values[name] ?? "";
+    if (!raw) return;
+    const { error } = validateField(name, raw);
+    setErrors((p) => ({ ...p, [name]: error }));
+  }
+
   function submit(e: FormEvent) {
     e.preventDefault();
     const next: Values = {};
+    const clean: Values = {};
     for (const f of fields) {
-      const v = (values[f.name] ?? "").trim();
-      if (!v) next[f.name] = `${f.label} is required`;
-      else if (f.type === "email" && !/^\S+@\S+\.\S+$/.test(v)) next[f.name] = "Enter a valid email address";
+      const r = validateField(f.name, values[f.name] ?? "");
+      if (r.error) next[f.name] = r.error;
+      clean[f.name] = r.value;
     }
     setErrors(next);
-    if (Object.keys(next).length) {
-      const first = fields.find((f) => next[f.name]);
-      if (first) ref.current?.querySelector<HTMLInputElement>(`[name="${first.name}"]`)?.focus();
+    const first = fields.find((f) => next[f.name]);
+    if (first) {
+      ref.current?.querySelector<HTMLInputElement>(`[name="${first.name}"]`)?.focus();
       return;
     }
-    const v = (n: FieldName) => (values[n] ?? "").trim();
+    const v = (n: FieldName) => clean[n] ?? "";
     onAdd({
       id: `new-${Date.now()}`,
       type,
@@ -136,7 +151,11 @@ export function AddCustomerDialog({
                     autoComplete="off"
                     placeholder={f.placeholder}
                     value={values[f.name] ?? ""}
-                    onChange={(e) => setValues((p) => ({ ...p, [f.name]: e.target.value }))}
+                    onChange={(e) => change(f.name, e.target.value)}
+                    onBlur={() => blur(f.name)}
+                    spellCheck={false}
+                    autoCapitalize="off"
+                    inputMode={f.type === "tel" ? "tel" : f.type === "email" ? "email" : undefined}
                     aria-invalid={errors[f.name] ? true : undefined}
                     aria-describedby={errors[f.name] ? `${id}-err` : undefined}
                     className={cn(
