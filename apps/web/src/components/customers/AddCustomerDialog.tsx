@@ -3,16 +3,9 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { X } from "lucide-react";
 import { cn } from "@/lib/cn";
-import {
-  customerTypes,
-  fieldsByType,
-  type Customer,
-  type CustomerType,
-  type FieldName,
-} from "@/lib/customers";
-import { sanitizeAccountInput, sanitizePhoneInput, validateField } from "@/lib/customer-validation";
-
-type Values = Partial<Record<FieldName, string>>;
+import { customerTypes, fromFormValues, type Customer, type CustomerType } from "@/lib/customers";
+import { CustomerFields } from "./CustomerFields";
+import { useCustomerForm } from "./useCustomerForm";
 
 export function AddCustomerDialog({
   open,
@@ -25,63 +18,26 @@ export function AddCustomerDialog({
 }) {
   const ref = useRef<HTMLDialogElement>(null);
   const [type, setType] = useState<CustomerType>("End User");
-  const [values, setValues] = useState<Values>({});
-  const [errors, setErrors] = useState<Values>({});
+  const form = useCustomerForm(ref);
 
   useEffect(() => {
     const d = ref.current;
     if (!d) return;
     if (open && !d.open) {
       setType("End User");
-      setValues({});
-      setErrors({});
+      form.reset();
       d.showModal();
     } else if (!open && d.open) {
       d.close();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
-
-  const fields = fieldsByType[type];
-
-  function change(name: FieldName, raw: string) {
-    const value = name === "account" ? sanitizeAccountInput(raw) : name === "phone" ? sanitizePhoneInput(raw) : raw;
-    setValues((p) => ({ ...p, [name]: value }));
-    if (errors[name]) setErrors((p) => ({ ...p, [name]: undefined }));
-  }
-
-  function blur(name: FieldName) {
-    const raw = values[name] ?? "";
-    if (!raw) return;
-    const { error } = validateField(name, raw);
-    setErrors((p) => ({ ...p, [name]: error }));
-  }
 
   function submit(e: FormEvent) {
     e.preventDefault();
-    const next: Values = {};
-    const clean: Values = {};
-    for (const f of fields) {
-      const r = validateField(f.name, values[f.name] ?? "");
-      if (r.error) next[f.name] = r.error;
-      clean[f.name] = r.value;
-    }
-    setErrors(next);
-    const first = fields.find((f) => next[f.name]);
-    if (first) {
-      ref.current?.querySelector<HTMLInputElement>(`[name="${first.name}"]`)?.focus();
-      return;
-    }
-    const v = (n: FieldName) => clean[n] ?? "";
-    onAdd({
-      id: `new-${Date.now()}`,
-      type,
-      name: type === "Company" ? v("companyName") : `${v("firstName")} ${v("lastName")}`,
-      account: v("account"),
-      phone: v("phone"),
-      email: v("email"),
-      location: v("location"),
-      ...(type === "Company" ? { pin: v("pin") } : {}),
-    });
+    const clean = form.validate(type);
+    if (!clean) return;
+    onAdd(fromFormValues(`new-${Date.now()}`, type, clean));
     onClose();
   }
 
@@ -126,7 +82,7 @@ export function AddCustomerDialog({
                     checked={type === t}
                     onChange={() => {
                       setType(t);
-                      setErrors({});
+                      form.reset(form.values);
                     }}
                     className="sr-only"
                   />
@@ -136,42 +92,7 @@ export function AddCustomerDialog({
             </div>
           </fieldset>
 
-          <div className="grid gap-4 sm:grid-cols-2">
-            {fields.map((f) => {
-              const id = `cust-${f.name}`;
-              return (
-                <div key={`${type}-${f.name}`} className={cn("flex flex-col gap-1.5", f.wide && "sm:col-span-2")}>
-                  <label htmlFor={id} className="text-[13.5px] font-medium">
-                    {f.label}
-                  </label>
-                  <input
-                    id={id}
-                    name={f.name}
-                    type={f.type}
-                    autoComplete="off"
-                    placeholder={f.placeholder}
-                    value={values[f.name] ?? ""}
-                    onChange={(e) => change(f.name, e.target.value)}
-                    onBlur={() => blur(f.name)}
-                    spellCheck={false}
-                    autoCapitalize="off"
-                    inputMode={f.type === "tel" ? "tel" : f.type === "email" ? "email" : undefined}
-                    aria-invalid={errors[f.name] ? true : undefined}
-                    aria-describedby={errors[f.name] ? `${id}-err` : undefined}
-                    className={cn(
-                      "min-h-11 rounded-xl border bg-white px-3.5 text-[15px] placeholder:text-muted/70",
-                      errors[f.name] ? "border-[#C62828]" : "border-line",
-                    )}
-                  />
-                  {errors[f.name] && (
-                    <p id={`${id}-err`} className="text-[13px] text-[#C62828]">
-                      {errors[f.name]}
-                    </p>
-                  )}
-                </div>
-              );
-            })}
-          </div>
+          <CustomerFields type={type} values={form.values} errors={form.errors} onChange={form.change} onBlur={form.blur} />
         </div>
 
         <div className="flex justify-end gap-3 border-t border-line px-5 py-4 sm:px-6">

@@ -10,6 +10,9 @@ export type Customer = {
   phone: string;
   email: string;
   location: string;
+  /** People only (End User, Distributor). */
+  firstName?: string;
+  lastName?: string;
   /** Companies only. */
   pin?: string;
 };
@@ -72,3 +75,27 @@ export const sampleCustomers: Customer[] = [
   { id: "c7", type: "Company", name: "Lakeview Transport", account: "ACC-3003", phone: "+254700000107", email: "office@lakeview-transport.example", location: "Kisumu", pin: "P000000003C" },
   { id: "c8", type: "End User", name: "Grace Njeri", account: "ACC-1003", phone: "+254700000108", email: "grace.njeri@example.com", location: "Thika" },
 ];
+
+/** Current values of a customer as form field values. */
+export function toFormValues(c: Customer): Partial<Record<FieldName, string>> {
+  if (c.type === "Company") {
+    return { companyName: c.name, account: c.account, phone: c.phone, email: c.email, pin: c.pin ?? "", location: c.location };
+  }
+  const [first, ...rest] = c.name.split(" ");
+  return {
+    firstName: c.firstName ?? first,
+    lastName: c.lastName ?? rest.join(" "),
+    account: c.account,
+    phone: c.phone,
+    email: c.email,
+    location: c.location,
+  };
+}
+
+/** Builds a customer from already-validated field values. */
+export function fromFormValues(id: string, type: CustomerType, v: Partial<Record<FieldName, string>>): Customer {
+  const get = (n: FieldName) => v[n] ?? "";
+  const base = { id, type, account: get("account"), phone: get("phone"), email: get("email"), location: get("location") };
+  if (type === "Company") return { ...base, name: get("companyName"), pin: get("pin") };
+  return { ...base, name: `${get("firstName")} ${get("lastName")}`, firstName: get("firstName"), lastName: get("lastName") };
+}
