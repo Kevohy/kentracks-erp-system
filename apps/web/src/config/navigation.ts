@@ -33,7 +33,7 @@ export const navigation: NavItem[] = [
     children: [
       { label: "Customers", href: "/crm/customers", built: true },
       { label: "Suppliers", href: "/crm/suppliers", built: true },
-      { label: "Technicians", href: "/crm/technicians" },
+      { label: "Technicians", href: "/crm/technicians", built: true },
     ],
   },
   {
