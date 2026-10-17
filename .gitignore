@@ -30,3 +30,7 @@ Thumbs.db
 
 # Coverage
 coverage/
+
+# Next.js / TypeScript
+next-env.d.ts
+*.tsbuildinfo
