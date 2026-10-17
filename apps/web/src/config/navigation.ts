@@ -32,7 +32,7 @@ export const navigation: NavItem[] = [
     icon: Users,
     children: [
       { label: "Customers", href: "/crm/customers", built: true },
-      { label: "Suppliers", href: "/crm/suppliers" },
+      { label: "Suppliers", href: "/crm/suppliers", built: true },
       { label: "Technicians", href: "/crm/technicians" },
     ],
   },
