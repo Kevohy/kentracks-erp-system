@@ -41,8 +41,11 @@ export const navigation: NavItem[] = [
     label: "Inventory",
     icon: Package,
     children: [
-      { label: "Inventory", href: "/inventory/inventory" },
-      { label: "Purchases", href: "/inventory/purchases" },
+      { label: "Dashboard", href: "/inventory/dashboard", built: true },
+      { label: "Products", href: "/inventory/products", built: true },
+      { label: "SIM Cards", href: "/inventory/sim-cards", built: true },
+      { label: "Platforms", href: "/inventory/platforms", built: true },
+      { label: "Purchases", href: "/inventory/purchases", built: true },
     ],
   },
   { id: "sales", label: "Sales", icon: TrendingUp, href: "/sales" },
