@@ -11,7 +11,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 
-export type NavChild = { label: string; href: string };
+export type NavChild = { label: string; href: string; /** True once the page has its own implementation. */ built?: boolean };
 
 export type NavItem = {
   id: string;
@@ -31,7 +31,7 @@ export const navigation: NavItem[] = [
     label: "CRM",
     icon: Users,
     children: [
-      { label: "Customers", href: "/crm/customers" },
+      { label: "Customers", href: "/crm/customers", built: true },
       { label: "Suppliers", href: "/crm/suppliers" },
       { label: "Technicians", href: "/crm/technicians" },
     ],
@@ -107,7 +107,9 @@ export function allPlaceholderPaths(): string[][] {
   const paths: string[][] = [];
   for (const item of navigation) {
     if (item.href && item.href !== "/") paths.push(item.href.split("/").filter(Boolean));
-    for (const c of item.children ?? []) paths.push(c.href.split("/").filter(Boolean));
+    for (const c of item.children ?? []) {
+      if (!c.built) paths.push(c.href.split("/").filter(Boolean));
+    }
   }
   return paths;
 }
