@@ -23,7 +23,7 @@ export function AddCustomerDialog({
   onAdd: (customer: Customer) => void;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
-  const [type, setType] = useState<CustomerType>("End user");
+  const [type, setType] = useState<CustomerType>("End User");
   const [values, setValues] = useState<Values>({});
   const [errors, setErrors] = useState<Values>({});
 
@@ -31,7 +31,7 @@ export function AddCustomerDialog({
     const d = ref.current;
     if (!d) return;
     if (open && !d.open) {
-      setType("End user");
+      setType("End User");
       setValues({});
       setErrors({});
       d.showModal();
@@ -80,7 +80,7 @@ export function AddCustomerDialog({
       <form onSubmit={submit} noValidate className="flex max-h-[calc(100dvh-32px)] flex-col">
         <div className="flex items-center justify-between gap-3 border-b border-line px-5 py-4 sm:px-6">
           <h2 id="add-customer-title" className="text-lg font-semibold">
-            Add customer
+            Add Customer
           </h2>
           <button
             type="button"
@@ -94,7 +94,7 @@ export function AddCustomerDialog({
 
         <div className="flex flex-col gap-5 overflow-y-auto px-5 py-5 sm:px-6">
           <fieldset>
-            <legend className="mb-2 text-[13.5px] font-medium text-muted">Type of customer</legend>
+            <legend className="mb-2 text-[13.5px] font-medium text-muted">Type of Customer</legend>
             <div className="grid grid-cols-3 gap-1 rounded-xl bg-canvas p-1">
               {customerTypes.map((t) => (
                 <label
@@ -133,7 +133,8 @@ export function AddCustomerDialog({
                     id={id}
                     name={f.name}
                     type={f.type}
-                    autoComplete={f.autoComplete ?? "off"}
+                    autoComplete="off"
+                    placeholder={f.placeholder}
                     value={values[f.name] ?? ""}
                     onChange={(e) => setValues((p) => ({ ...p, [f.name]: e.target.value }))}
                     aria-invalid={errors[f.name] ? true : undefined}
@@ -163,7 +164,7 @@ export function AddCustomerDialog({
             Cancel
           </button>
           <button type="submit" className="min-h-11 rounded-xl bg-brand px-5 text-[15px] font-semibold text-white hover:brightness-95">
-            Save customer
+            Save Customer
           </button>
         </div>
       </form>

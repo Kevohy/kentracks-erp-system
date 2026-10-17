@@ -9,7 +9,7 @@ import { sampleCustomers, type Customer, type CustomerType } from "@/lib/custome
 import { AddCustomerDialog } from "./AddCustomerDialog";
 
 const typeStyle: Record<CustomerType, string> = {
-  "End user": "bg-tint text-navy",
+  "End User": "bg-tint text-navy",
   Distributor: "bg-[#FFF1EA] text-[#B43A00]",
   Company: "bg-canvas text-ink",
 };
@@ -29,7 +29,7 @@ export function CustomersView() {
             className="inline-flex min-h-11 items-center gap-2 rounded-xl bg-brand px-4 text-[15px] font-semibold text-white hover:brightness-95"
           >
             <Plus size={18} aria-hidden="true" />
-            Add customer
+            Add Customer
           </button>
         }
       />
@@ -40,7 +40,7 @@ export function CustomersView() {
             <caption className="sr-only">Customers (sample data)</caption>
             <thead>
               <tr className="border-b border-line text-[13px] text-muted">
-                {["Name", "Type", "Account", "Phone", "Email", "Location"].map((h) => (
+                {["Name", "Type", "Account", "Phone Number", "Email", "Location"].map((h) => (
                   <th key={h} scope="col" className="px-4 py-3 font-medium first:pl-6 last:pr-6">
                     {h}
                   </th>
