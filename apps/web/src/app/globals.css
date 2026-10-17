@@ -1,0 +1,37 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Jost Variable", ui-sans-serif, system-ui, sans-serif;
+
+  --color-navy: #055587;
+  --color-brand: #fe5102;
+  --color-ink: #14202b;
+  --color-muted: #5b6b7a;
+  --color-line: #e3e8ed;
+  --color-canvas: #f3f5f8;
+  --color-tint: #e8f1f7;
+
+  --color-sidebar: #0a1d2c;
+  --color-sidebar-text: #b9c7d3;
+  --color-sidebar-muted: #93a4b3;
+  --color-sidebar-icon: #8fa2b3;
+  --color-sidebar-accent: #ff8a57;
+}
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+  body {
+    background-color: var(--color-canvas);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    font-size: 15px;
+    line-height: 1.45;
+    -webkit-font-smoothing: antialiased;
+  }
+  :focus-visible {
+    outline: 2px solid var(--color-navy);
+    outline-offset: 2px;
+  }
+}
