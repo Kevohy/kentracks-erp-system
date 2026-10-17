@@ -35,7 +35,6 @@ export type SupplierFieldDef = {
   label: string;
   type: "text" | "tel" | "email";
   placeholder: string;
-  optional?: boolean;
   wide?: boolean;
   /** Fields inside the Contact Person section. */
   group?: "contact";
@@ -53,7 +52,7 @@ export const supplierFields: Record<SupplierType, SupplierFieldDef[]> = {
   ],
   Company: [
     { name: "companyName", label: "Company Name", type: "text", placeholder: "Enter company name", wide: true },
-    { name: "kraPin", label: "KRA PIN (optional)", type: "text", placeholder: "e.g. P051234567A", optional: true },
+    { name: "kraPin", label: "KRA PIN (optional)", type: "text", placeholder: "e.g. P051234567A" },
     { name: "location", label: "Location", type: "text", placeholder: "e.g. Industrial Area, Nairobi" },
     { name: "contactName", label: "Name", type: "text", placeholder: "Enter contact name", group: "contact" },
     { name: "contactEmail", label: "Email", type: "email", placeholder: "name@example.com", group: "contact" },
