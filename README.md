@@ -15,6 +15,11 @@ ERP platform for Kentracks GPS.
 | CRM → Customers | List, add (End User / Distributor / Company), view and edit |
 | CRM → Suppliers | List and add (Individual / Company) |
 | CRM → Technicians | List and add |
+| Inventory → Dashboard | Links to the Inventory pages |
+| Inventory → Products | Product list, product categories, add product and add category |
+| Inventory → SIM Cards | List and add (name and type) |
+| Inventory → Platforms | List and add; each platform gets New, Annual and Lifelong card licence types automatically |
+| Inventory → Purchases | List and add (Pending or Received; multiple items; amount paid and balance); received purchases update Inventory quantities for the session |
 | All other menu items | Navigation entries with a "not designed yet" placeholder page |
 
 Form input is validated and sanitised in the browser (names, accounts, Kenyan-default
@@ -79,6 +84,8 @@ apps/web/
       customers/    Customers list, dialogs and form pieces
       suppliers/    Suppliers list and add dialog
       technicians/  Technicians list and add dialog
+      inventory/    Inventory pages, shared add-form dialog and the session data provider
+      purchases/    Purchases list and add-purchase dialog
     config/         Navigation menu definition (single source of truth for the sidebar)
     lib/            Data types and sample data per module, plus validation
 .github/workflows/  CI

@@ -3,13 +3,15 @@
 import { useState } from "react";
 import { PageHeader } from "@/components/shell/PageHeader";
 import { Card } from "@/components/dashboard/Card";
-import { sampleSimCards, simCardTypes, type SimCard, type SimCardType } from "@/lib/inventory";
+import { simCardTypes, type SimCardType } from "@/lib/inventory";
+import { formatKes } from "@/lib/purchases";
 import { validateSimCardName, validateSimCardType } from "@/lib/inventory-validation";
 import { AddButton } from "./AddButton";
 import { InventoryFormDialog } from "./InventoryFormDialog";
+import { useInventory } from "./InventoryProvider";
 
 export function SimCardsView() {
-  const [cards, setCards] = useState<SimCard[]>(sampleSimCards);
+  const { simCards, stockOf, addSimCard } = useInventory();
   const [open, setOpen] = useState(false);
 
   return (
@@ -18,21 +20,30 @@ export function SimCardsView() {
 
       <Card className="overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[360px] border-collapse text-left text-[14.5px]">
+          <table className="w-full min-w-[520px] border-collapse text-left text-[14.5px]">
             <caption className="sr-only">SIM cards (sample data)</caption>
             <thead>
               <tr className="border-b border-line text-[13px] text-muted">
                 <th scope="col" className="px-4 py-3 pl-6 font-medium">SIM Card Name</th>
-                <th scope="col" className="px-4 py-3 pr-6 font-medium">Type</th>
+                <th scope="col" className="px-4 py-3 font-medium">Type</th>
+                <th scope="col" className="px-4 py-3 text-right font-medium">Quantity</th>
+                <th scope="col" className="px-4 py-3 pr-6 text-right font-medium">Latest buying price</th>
               </tr>
             </thead>
             <tbody>
-              {cards.map((c) => (
-                <tr key={c.id} className="border-b border-line last:border-b-0">
-                  <th scope="row" className="px-4 py-3.5 pl-6 font-semibold">{c.name}</th>
-                  <td className="px-4 py-3.5 pr-6">{c.type}</td>
-                </tr>
-              ))}
+              {simCards.map((c) => {
+                const s = stockOf("SIM Card", c.id);
+                return (
+                  <tr key={c.id} className="border-b border-line last:border-b-0">
+                    <th scope="row" className="px-4 py-3.5 pl-6 font-semibold">{c.name}</th>
+                    <td className="px-4 py-3.5">{c.type}</td>
+                    <td className="px-4 py-3.5 text-right tabular-nums">{s.quantity}</td>
+                    <td className="whitespace-nowrap px-4 py-3.5 pr-6 text-right tabular-nums text-muted">
+                      {s.latestPriceMinor === null ? "—" : formatKes(s.latestPriceMinor)}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -54,7 +65,7 @@ export function SimCardsView() {
           },
         ]}
         onClose={() => setOpen(false)}
-        onSave={(v) => setCards((prev) => [{ id: `new-${Date.now()}`, name: v.name, type: v.type as SimCardType }, ...prev])}
+        onSave={(v) => addSimCard(v.name, v.type as SimCardType)}
       />
     </>
   );
