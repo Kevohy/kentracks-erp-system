@@ -5,6 +5,7 @@ import {
   MessageSquare,
   Package,
   Receipt,
+  Settings,
   TrendingUp,
   Users,
   Wallet,
@@ -19,6 +20,8 @@ export type NavItem = {
   icon: LucideIcon;
   /** Present for items that navigate directly. */
   href?: string;
+  /** True once the page has its own implementation (direct items only). */
+  built?: boolean;
   /** Present for items that expand into sub-items. */
   children?: NavChild[];
 };
@@ -48,7 +51,17 @@ export const navigation: NavItem[] = [
       { label: "Purchases", href: "/inventory/purchases", built: true },
     ],
   },
-  { id: "sales", label: "Sales", icon: TrendingUp, href: "/sales" },
+  {
+    id: "sales",
+    label: "Sales",
+    icon: TrendingUp,
+    children: [
+      { label: "All Sales", href: "/sales", built: true },
+      { label: "Package Sale", href: "/sales/package", built: true },
+      { label: "Hosting Sale", href: "/sales/hosting", built: true },
+      { label: "Retailer Sale", href: "/sales/retailer", built: true },
+    ],
+  },
   {
     id: "finance",
     label: "Finance",
@@ -71,6 +84,7 @@ export const navigation: NavItem[] = [
     children: [
       { label: "Bulk SMS", href: "/communication/bulk-sms" },
       { label: "Airtime", href: "/communication/airtime" },
+      { label: "GPS Platform", href: "/communication/gps-platform" },
     ],
   },
   {
@@ -84,6 +98,12 @@ export const navigation: NavItem[] = [
     ],
   },
   { id: "booking", label: "Booking", icon: CalendarDays, href: "/booking" },
+  {
+    id: "settings",
+    label: "Settings",
+    icon: Settings,
+    children: [{ label: "Packages", href: "/settings/packages", built: true }],
+  },
 ];
 
 export type RouteInfo = {
@@ -109,7 +129,7 @@ export function findRoute(pathname: string): RouteInfo | undefined {
 export function allPlaceholderPaths(): string[][] {
   const paths: string[][] = [];
   for (const item of navigation) {
-    if (item.href && item.href !== "/") paths.push(item.href.split("/").filter(Boolean));
+    if (item.href && item.href !== "/" && !item.built) paths.push(item.href.split("/").filter(Boolean));
     for (const c of item.children ?? []) {
       if (!c.built) paths.push(c.href.split("/").filter(Boolean));
     }

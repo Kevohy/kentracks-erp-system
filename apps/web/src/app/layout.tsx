@@ -3,6 +3,7 @@ import "@fontsource-variable/jost";
 import "./globals.css";
 import { AppShell } from "@/components/shell/AppShell";
 import { InventoryProvider } from "@/components/inventory/InventoryProvider";
+import { SalesProvider } from "@/components/sales/SalesProvider";
 
 export const metadata: Metadata = {
   title: { default: "Kentracks ERP", template: "%s · Kentracks ERP" },
@@ -19,7 +20,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en">
       <body>
         <InventoryProvider>
-          <AppShell>{children}</AppShell>
+          <SalesProvider>
+            <AppShell>{children}</AppShell>
+          </SalesProvider>
         </InventoryProvider>
       </body>
     </html>
