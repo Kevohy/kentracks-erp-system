@@ -36,7 +36,7 @@ const IOT_TYPES = sql.raw(IOT_SIM_TYPES.map((t) => `'${t}'`).join(", "));
  * took an IoT SIM out of stock (iot_billing). The expiry is the one set on the line, else one year after the sale.
  * The yearly bill share comes from the group's latest bill: amount / lines, times 12 for monthly billing.
  */
-const lines = (tenantId: string) => sql`
+export const iotLines = (tenantId: string) => sql`
   WITH d AS (
     SELECT DISTINCT ON (ps.imei) ps.sale_id, ps.imei, ps.vehicle_plate, ps.sim_card_id, ps.sim_number, ps.gps_status, ps.gps_synced_at,
       ps.iot_billing, s.customer_id, s.created_at
@@ -126,7 +126,7 @@ function paging(url: URL, def: number) {
 const sortSims = sql`ORDER BY l.expires, l.sim_number, l.sale_id`;
 
 async function simsWhere(tenantId: string, where: SQL, extra: SQL = sql``): Promise<IotSim[]> {
-  const r = await getDb().execute<LineRow>(sql`${lines(tenantId)} SELECT ${SELECT_LINE} FROM l WHERE ${where} ${extra}`);
+  const r = await getDb().execute<LineRow>(sql`${iotLines(tenantId)} SELECT ${SELECT_LINE} FROM l WHERE ${where} ${extra}`);
   return r.rows.map(toSim);
 }
 
@@ -138,11 +138,11 @@ export async function listIotClients(ctx: AuthContext, url: URL): Promise<IotCli
   const db = getDb();
   // A search can match a customer through one line; all of that customer's lines are still shown.
   const [page, totals] = await Promise.all([
-    db.execute<{ id: string }>(sql`${lines(ctx.tenantId)}
+    db.execute<{ id: string }>(sql`${iotLines(ctx.tenantId)}
       SELECT l.customer_id AS id FROM l GROUP BY l.customer_id, l.customer_name
       HAVING bool_or(${searchSql(q)})
       ORDER BY l.customer_name, l.customer_id LIMIT ${limit + 1} OFFSET ${offset}`),
-    db.execute<CountRow>(sql`${lines(ctx.tenantId)}
+    db.execute<CountRow>(sql`${iotLines(ctx.tenantId)}
       SELECT ${counts} FROM l WHERE l.customer_id IN (SELECT l.customer_id FROM l WHERE ${searchSql(q)})`),
   ]);
   const ids = page.rows.slice(0, limit).map((r) => r.id);
@@ -176,12 +176,12 @@ export async function listIotGroups(ctx: AuthContext): Promise<IotGroupsResult> 
       FROM sim_cards sc LEFT JOIN iot_sim_groups g ON g.sim_card_id = sc.id
       WHERE sc.tenant_id = ${ctx.tenantId} AND sc.type IN (${IOT_TYPES})
       ORDER BY sc.name, sc.type, sc.id`),
-    db.execute<CountRow & { sim_card_id: string }>(sql`${lines(ctx.tenantId)} SELECT l.sim_card_id, ${counts} FROM l GROUP BY l.sim_card_id`),
+    db.execute<CountRow & { sim_card_id: string }>(sql`${iotLines(ctx.tenantId)} SELECT l.sim_card_id, ${counts} FROM l GROUP BY l.sim_card_id`),
     db.execute<BillRow>(sql`
       SELECT DISTINCT ON (b.sim_card_id) b.id, b.sim_card_id, b.period, b.amount_minor::text AS amount_minor, b.lines, b.note, b.created_at
       FROM iot_sim_bills b WHERE b.tenant_id = ${ctx.tenantId}
       ORDER BY b.sim_card_id, b.period DESC, b.created_at DESC`),
-    db.execute<CountRow>(sql`${lines(ctx.tenantId)} SELECT ${counts} FROM l`),
+    db.execute<CountRow>(sql`${iotLines(ctx.tenantId)} SELECT ${counts} FROM l`),
   ]);
   const aggBy = new Map(agg.rows.map((r) => [r.sim_card_id, r]));
   const billBy = new Map(bills.rows.map((b) => [b.sim_card_id, toBill(b)]));
@@ -235,7 +235,7 @@ export async function listIotRenewals(ctx: AuthContext, url: URL): Promise<IotRe
   const [due, recent, n] = await Promise.all([
     simsWhere(ctx.tenantId, sql`(${isExpired} OR ${isSoon})`, sql`${sortSims} LIMIT ${limit} OFFSET ${offset}`),
     db.execute<RenewalRow>(renewalsSql(ctx.tenantId, sql`TRUE`, 20)),
-    db.execute<{ expired: number; soon: number }>(sql`${lines(ctx.tenantId)}
+    db.execute<{ expired: number; soon: number }>(sql`${iotLines(ctx.tenantId)}
       SELECT count(*) FILTER (WHERE ${isExpired})::int AS expired, count(*) FILTER (WHERE ${isSoon})::int AS soon FROM l`),
   ]);
   return { due, recent: recent.rows.map(toRenewal), expired: n.rows[0]?.expired ?? 0, dueSoon: n.rows[0]?.soon ?? 0 };
@@ -391,7 +391,7 @@ export async function recordGroupBill(ctx: AuthContext, id: string, body: Body):
   if (Object.keys(errors).length) throwValidation(errors);
   if (!(await ownGroup(ctx.tenantId, id))) return null;
 
-  const active = await getDb().execute<{ n: number }>(sql`${lines(ctx.tenantId)}
+  const active = await getDb().execute<{ n: number }>(sql`${iotLines(ctx.tenantId)}
     SELECT count(*)::int AS n FROM l WHERE l.sim_card_id = ${id}::uuid AND NOT l.suspended`);
   const res = await getDb().execute<BillRow>(sql`
     INSERT INTO iot_sim_bills (tenant_id, sim_card_id, period, amount_minor, lines, note, created_by)

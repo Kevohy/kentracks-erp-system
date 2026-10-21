@@ -43,10 +43,11 @@ export function validateField(field: FieldName, raw: string): FieldResult {
         return { value, error: "Account can only contain letters, numbers, dots, hyphens, underscores and slashes" };
       return { value };
     }
+    // Phone and email are each optional (a customer may keep one private), but at least one is needed: validateContact.
     case "phone":
-      return validatePhone(raw);
+      return sanitizePhoneInput(raw).trim() ? validatePhone(raw) : { value: "" };
     case "email":
-      return validateEmail(raw);
+      return stripControlChars(raw).trim() ? validateEmail(raw) : { value: "" };
     case "pin":
       return validateRequiredText(raw, "PIN", 20);
     case "location":
@@ -55,4 +56,11 @@ export function validateField(field: FieldName, raw: string): FieldResult {
       // Every customer has a brand; the server checks that it is one of this company's brands.
       return raw.trim() ? { value: raw.trim() } : { value: "", error: "Select a brand" };
   }
+}
+
+export const CONTACT_REQUIRED = "Enter a phone number or an email";
+
+/** A customer needs a phone number or an email (or both). Takes the cleaned values; returns errors for both fields. */
+export function validateContact(phone: string, email: string): { phone?: string; email?: string } {
+  return phone || email ? {} : { phone: CONTACT_REQUIRED, email: CONTACT_REQUIRED };
 }

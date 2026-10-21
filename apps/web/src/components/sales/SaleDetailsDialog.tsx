@@ -1,10 +1,14 @@
 "use client";
 
-import { useEffect, useRef, type ReactNode } from "react";
-import { PackageMinus, X } from "lucide-react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { HandCoins, Loader2, PackageMinus, X } from "lucide-react";
 import { cn } from "@/lib/cn";
+import { todayInNairobi } from "@/lib/billing";
+import { erpApi } from "@/lib/erp-api";
 import type { Sale } from "@/lib/sales";
+import type { SalePayments } from "@/lib/sale-payments";
 import { formatKes, formatSigned, paymentState } from "@/lib/sales-format";
+import { RecordPaymentForm, nairobiDay } from "./RecordPaymentForm";
 
 const statusStyle = { "Paid in full": "bg-[#E6F4EA] text-[#1B5E20]", "Partly paid": "bg-[#FFF4E5] text-[#9a3300]", Unpaid: "bg-[#FDECEA] text-[#B71C1C]" } as const;
 
@@ -38,16 +42,58 @@ function Row({ label, value, strong, tone }: { label: string; value: string; str
   );
 }
 
-/** Everything recorded for one sale, including what it took out of inventory. */
-export function SaleDetailsDialog({ sale, onClose }: { sale: Sale | null; onClose: () => void }) {
+const shortDay = (day: string) => new Date(`${day}T00:00:00Z`).toLocaleDateString("en-KE", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
+
+/**
+ * Everything recorded for one sale, including what it took out of inventory and its payments. A sale not paid in full
+ * can record a payment here; `onUpdated` gets the sale with its new amount paid.
+ */
+export function SaleDetailsDialog({
+  sale,
+  onClose,
+  onUpdated,
+  startWithPayment = false,
+}: {
+  sale: Sale | null;
+  onClose: () => void;
+  onUpdated?: (sale: Sale) => void;
+  /** Open with the Record payment form showing (from the list's Record payment button). */
+  startWithPayment?: boolean;
+}) {
   const ref = useRef<HTMLDialogElement>(null);
   const id = sale?.id;
+  const [payments, setPayments] = useState<SalePayments | null>(null);
+  const [paymentsError, setPaymentsError] = useState<string | null>(null);
+  const [paying, setPaying] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+  const isOld = !!sale && sale.type !== "Retailer Sale" && sale.oldSale;
 
   useEffect(() => {
     const d = ref.current;
     if (!d) return;
     if (sale && !d.open) d.showModal();
     else if (!sale && d.open) d.close();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id]);
+
+  // Payments of the sale on view (old sales have none).
+  useEffect(() => {
+    let live = true;
+    /* eslint-disable react-hooks/set-state-in-effect */
+    setPayments(null);
+    setPaymentsError(null);
+    setNotice(null);
+    setPaying(!!id && startWithPayment && !isOld && !!sale && sale.paidMinor < sale.totalMinor);
+    /* eslint-enable react-hooks/set-state-in-effect */
+    if (!id || isOld) return;
+    void erpApi.sales.payments(id).then((r) => {
+      if (!live) return;
+      if (r.ok) setPayments(r.data);
+      else setPaymentsError(r.message);
+    });
+    return () => {
+      live = false;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
@@ -90,6 +136,67 @@ export function SaleDetailsDialog({ sale, onClose }: { sale: Sale | null; onClos
           </div>
 
           <div className="flex flex-col gap-6 overflow-y-auto px-5 py-5 sm:px-6">
+            {!old && (
+              <Section title="Payments">
+                {notice && <p role="status" className="rounded-xl bg-[#E6F4EA] px-4 py-3 text-[14px] text-[#1B5E20]">{notice}</p>}
+                {paymentsError && <p role="alert" className="text-[14px] text-[#C62828]">{paymentsError}</p>}
+                {!payments && !paymentsError && (
+                  <p role="status" className="flex items-center gap-2 text-[14px] text-muted"><Loader2 size={16} className="animate-spin" aria-hidden="true" />Loading payments…</p>
+                )}
+                {payments && (
+                  <ul aria-label="Payments" className="flex flex-col divide-y divide-line rounded-xl border border-line">
+                    <li className="flex items-baseline justify-between gap-3 px-4 py-3">
+                      <span className="min-w-0">
+                        <span className="block text-[14.5px] font-medium">Paid at sale</span>
+                        <span className="block text-[12.5px] text-muted">{shortDay(nairobiDay(sale.createdAt))}</span>
+                      </span>
+                      <span className="shrink-0 font-semibold tabular-nums">{formatKes(payments.atSaleMinor)}</span>
+                    </li>
+                    {payments.payments.map((p) => (
+                      <li key={p.id} className="flex items-baseline justify-between gap-3 px-4 py-3">
+                        <span className="min-w-0">
+                          <span className="block text-[14.5px] font-medium">{p.method}{p.reference ? <span className="font-mono text-[13px] text-muted"> · {p.reference}</span> : null}</span>
+                          <span className="block text-[12.5px] text-muted">
+                            {shortDay(p.paidOn)}{p.recordedBy ? ` · recorded by ${p.recordedBy}` : ""}
+                          </span>
+                          {p.note && <span className="block break-words text-[13px] text-muted">{p.note}</span>}
+                        </span>
+                        <span className="shrink-0 font-semibold tabular-nums text-[#1B5E20]">+{formatKes(p.amountMinor)}</span>
+                      </li>
+                    ))}
+                    <li className="flex items-baseline justify-between gap-3 bg-canvas/60 px-4 py-3">
+                      <span className="text-[14.5px] font-semibold">Balance</span>
+                      <span className={cn("shrink-0 font-semibold tabular-nums", payments.balanceMinor > 0 ? "text-[#9a3300]" : "text-[#1B5E20]")}>
+                        {payments.balanceMinor > 0 ? formatKes(payments.balanceMinor) : "Paid in full"}
+                      </span>
+                    </li>
+                  </ul>
+                )}
+                {payments && payments.balanceMinor > 0 && (paying ? (
+                  <RecordPaymentForm
+                    sale={sale}
+                    balanceMinor={payments.balanceMinor}
+                    today={todayInNairobi()}
+                    onCancel={() => setPaying(false)}
+                    onSaved={(r) => {
+                      setPayments(r.payments);
+                      setPaying(false);
+                      setNotice(r.payments.balanceMinor > 0 ? `Payment saved. Balance now ${formatKes(r.payments.balanceMinor)}.` : "Payment saved. This sale is now paid in full.");
+                      onUpdated?.(r.sale);
+                    }}
+                  />
+                ) : (
+                  <div>
+                    <button type="button" onClick={() => { setPaying(true); setNotice(null); }}
+                      className="inline-flex min-h-11 items-center gap-2 rounded-xl bg-brand px-4 text-[15px] font-semibold text-white hover:brightness-95">
+                      <HandCoins size={18} aria-hidden="true" />
+                      Record payment
+                    </button>
+                  </div>
+                ))}
+              </Section>
+            )}
+
             <Section title="Taken from inventory">
               {old ? (
                 <p className="rounded-xl bg-canvas px-4 py-3 text-[14px] text-muted">Old sale: nothing was taken from inventory.</p>
@@ -122,7 +229,7 @@ export function SaleDetailsDialog({ sale, onClose }: { sale: Sale | null; onClos
                     <Item label="IMEI" value={pkg.imei} mono />
                     <Item label="Vehicle plate" value={pkg.vehiclePlate} />
                     <Item label="GPS account" value={pkg.gpsAccount} />
-                    <Item label="Verification" value={pkg.verificationSource === "mock" ? "Mock data (not GPSPlatform)" : "GPSPlatform"} />
+                    <Item label="Verification" value={pkg.verificationSource === "mock" ? "Mock data (not a GPS platform)" : (pkg.verificationPlatform ?? "Kentracks")} />
                     <Item label="Customer link" value={pkg.customerLink === "automatic" ? "Matched automatically" : "Chosen manually"} />
                     <Item label="Technician" value={pkg.technician?.name ?? ""} />
                   </dl>

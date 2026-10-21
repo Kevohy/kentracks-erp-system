@@ -13,6 +13,7 @@ import { execFileSync } from "node:child_process";
 import { after, before, describe, it } from "node:test";
 import pg from "pg";
 import { hashPassword } from "../src/server/auth/password.ts";
+import { freshEmail, freshPhone } from "./contacts.mts";
 
 const BASE = process.env.CRM_TEST_BASE_URL;
 const DB = process.env.DATABASE_URL;
@@ -252,7 +253,7 @@ describe("authenticated access and company isolation", () => {
   it("never lets the browser choose the company", async () => {
     const a = await signIn(A.email, A.password), b = await signIn(B.email, B.password);
     const brandA = (await api("GET", "/api/settings/brands", a)).data[0].id, brandB = (await api("GET", "/api/settings/brands", b)).data[0].id;
-    const c = await api("POST", "/api/crm/customers", a, { brandId: brandA, type: "End User", firstName: "Iso", lastName: "Lation", account: `ISO-${run}`, phone: "0712345678", email: "iso@example.com", location: "Nairobi" });
+    const c = await api("POST", "/api/crm/customers", a, { brandId: brandA, type: "End User", firstName: "Iso", lastName: "Lation", account: `ISO-${run}`, phone: freshPhone(), email: freshEmail("iso"), location: "Nairobi" });
     assert.equal(c.status, 201, c.text); customerIds.push(c.data.id);
     const mine = await api("GET", "/api/crm/customers", a); assert.ok(mine.data.some((x: Json) => x.id === c.data.id));
     // Tenant B cannot see, read, change or delete it, whatever tenant hints it sends.
@@ -262,9 +263,9 @@ describe("authenticated access and company isolation", () => {
       assert.equal(r.status, 200); assert.ok(!r.data.some((x: Json) => x.id === c.data.id), `B must not see A's customer via ${path}`);
     }
     assert.equal((await api("GET", `/api/crm/customers/${c.data.id}`, b, undefined, hints)).status, 404);
-    assert.equal((await api("PUT", `/api/crm/customers/${c.data.id}`, b, { type: "End User", firstName: "Hacked", lastName: "Name", account: `ISO-${run}`, phone: "0712345678", email: "iso@example.com", location: "X" }, hints)).status, 404);
+    assert.equal((await api("PUT", `/api/crm/customers/${c.data.id}`, b, { type: "End User", firstName: "Hacked", lastName: "Name", account: `ISO-${run}`, phone: freshPhone(), email: freshEmail("iso"), location: "X" }, hints)).status, 404);
     assert.equal((await api("DELETE", `/api/crm/customers/${c.data.id}`, b, undefined, hints)).status, 404);
-    const bodyHint = await api("POST", "/api/crm/customers", b, { brandId: brandB, type: "End User", firstName: "Body", lastName: "Hint", account: `ISO-${run}-b`, phone: "0723456789", email: "bh@example.com", location: "X", tenantId: tenantA });
+    const bodyHint = await api("POST", "/api/crm/customers", b, { brandId: brandB, type: "End User", firstName: "Body", lastName: "Hint", account: `ISO-${run}-b`, phone: freshPhone(), email: freshEmail("bh"), location: "X", tenantId: tenantA });
     if (bodyHint.status === 201) { customerIds.push(bodyHint.data.id); const row = (await db.query("select tenant_id from customers where id=$1", [bodyHint.data.id])).rows[0]; assert.equal(row.tenant_id, tenantB, "a tenantId in the body must not matter"); }
     else assert.ok(bodyHint.status >= 400 && bodyHint.status < 500);
     assert.equal(((await api("GET", `/api/crm/customers/${c.data.id}`, a)).data).firstName, "Iso", "A's record is untouched");

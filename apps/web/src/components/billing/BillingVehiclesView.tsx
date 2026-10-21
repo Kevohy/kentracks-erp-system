@@ -199,7 +199,7 @@ function CustomerCard({ c, open, onToggle, filter, today, syncing, onRefresh, on
         { label: open ? "Hide vehicles" : "Show vehicles", icon: ChevronDown, onSelect: onToggle },
         { label: "Refresh from GPS platform", icon: RefreshCw, onSelect: onRefresh, disabled: syncing },
         { label: "Copy account number", icon: Copy, onSelect: () => onCopy("Account number", c.account) },
-        { label: "Copy phone number", icon: Copy, onSelect: () => onCopy("Phone number", c.phone) },
+        ...(c.phone ? [{ label: "Copy phone number", icon: Copy, onSelect: () => onCopy("Phone number", c.phone) }] : []),
       ]}
     />
   );
@@ -216,7 +216,7 @@ function CustomerCard({ c, open, onToggle, filter, today, syncing, onRefresh, on
                 <span className="truncate text-[16px] font-semibold">{c.name}</span>
                 {c.brandName && <span className="rounded-full bg-tint px-2 py-0.5 text-[11.5px] font-semibold text-navy">{c.brandName}</span>}
               </span>
-              <span className="block truncate text-[13px] text-muted">{c.phone} · <span className="font-mono">{c.account}</span></span>
+              <span className="block truncate text-[13px] text-muted">{c.phone || c.email}{(c.phone || c.email) && " · "}<span className="font-mono">{c.account}</span></span>
               <span className="block text-[13px] text-muted">
                 Next expiry:{" "}
                 {next === "lifelong" ? <span className="font-medium text-navy">Lifelong</span>

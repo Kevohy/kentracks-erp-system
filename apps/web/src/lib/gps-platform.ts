@@ -26,10 +26,22 @@ export type GpsDevice = {
   lastSeen?: string;
   /** Platform expiration date. */
   expirationDate?: string;
+  /** Kentracks: the user (customer) expiration date set on the platform. */
+  userExpirationDate?: string;
   activationDate?: string;
+  /** The customer account on the GPS platform the device belongs to. */
   account?: string;
+  /** The GPS platform that verified the device ("Kentracks", "iTrack"); not set for mock data. */
+  platform?: string;
+  /** Kentracks: that account's role (account information, roletype). */
+  accountType?: GpsAccountType;
+  /** Kentracks: true when that account is blocked on the platform (blockstatus 0). */
+  accountBlocked?: boolean;
   contact?: { name?: string; phone?: string; email?: string };
 };
+
+export const GPS_ACCOUNT_TYPES = ["Distributor", "End User", "Virtual account"] as const;
+export type GpsAccountType = (typeof GPS_ACCOUNT_TYPES)[number];
 
 export type GpsSource = "mock" | "gpsplatform";
 
@@ -149,14 +161,99 @@ export function normalizeGpsDevice(raw: unknown): { device: GpsDevice; missing: 
     vehiclePlate: text(raw.plate_number, 30),
     lastSeen: when(raw.last_seen),
     expirationDate: when(raw.expiry_date),
+    userExpirationDate: when(raw.user_expiry_date),
     activationDate: when(raw.activation_date),
     account: text(raw.account),
+    platform: text(raw.platform, 40),
+    accountType: (GPS_ACCOUNT_TYPES as readonly unknown[]).includes(raw.account_type) ? (raw.account_type as GpsAccountType) : undefined,
+    accountBlocked: typeof raw.account_blocked === "boolean" ? raw.account_blocked : undefined,
     contact: contact.name || contact.phone || contact.email ? contact : undefined,
   };
   // A past expiration date always means Expired, whatever else the API says.
   if (isPast(device.expirationDate)) device.status = "Expired";
   const missing = OPTIONAL_LABELS.filter(([k]) => device[k] === undefined).map(([, label]) => label);
   return { device, missing };
+}
+
+// ------------------------------------------------------------ Kentracks API
+
+/** One record of GET /api/device/detail (Kentracks API doc section 2). Times are Unix seconds; 0 means not set. */
+export type KentracksDeviceRecord = {
+  imei?: unknown;
+  devicename?: unknown;
+  devicetype?: unknown;
+  platenumber?: unknown;
+  onlinetime?: unknown;
+  platformduetime?: unknown;
+  simcard?: unknown;
+  iccid?: unknown;
+  activatedtime?: unknown;
+  userduetime?: unknown;
+  customeraccount?: unknown;
+};
+
+/** The record of GET /api/user/info (Kentracks API, "Get account information"). */
+export type KentracksUserInfo = {
+  account?: unknown;
+  username?: unknown;
+  email?: unknown;
+  mobile?: unknown;
+  telephone?: unknown;
+  contact?: unknown;
+  createtime?: unknown;
+  /** 1 Distributor, 2 End user, 3 Virtual account. */
+  roletype?: unknown;
+  /** 0 blocked, 1 not blocked. */
+  blockstatus?: unknown;
+  zipcode?: unknown;
+  remark?: unknown;
+};
+
+const ROLE_TYPES: Record<number, GpsAccountType> = { 1: "Distributor", 2: "End User", 3: "Virtual account" };
+const int = (v: unknown) => (typeof v === "number" ? v : typeof v === "string" && /^\d+$/.test(v.trim()) ? Number(v) : NaN);
+
+/**
+ * The device's customer account as the contact the sale form matches against the CRM (and offers as a new customer):
+ * the contact name (else the user name), the mobile (else the telephone) and the email, plus the account's role and
+ * whether it is blocked.
+ */
+export function kentracksAccountRaw(u: KentracksUserInfo): Record<string, unknown> {
+  const role = ROLE_TYPES[int(u.roletype)];
+  const block = int(u.blockstatus);
+  return {
+    contact: { name: text(u.contact) ?? text(u.username), phone: text(u.mobile, 40) ?? text(u.telephone, 40), email: text(u.email, 254) },
+    ...(role ? { account_type: role } : {}),
+    ...(block === 0 || block === 1 ? { account_blocked: block === 0 } : {}),
+  };
+}
+
+/** Unix seconds -> "YYYY-MM-DD" (or with " HH:mm") in Nairobi time; 0, negatives and junk give undefined. */
+export function kentracksTime(v: unknown, withTime = false): string | undefined {
+  const n = typeof v === "number" ? v : typeof v === "string" && /^\d+$/.test(v.trim()) ? Number(v) : NaN;
+  if (!Number.isFinite(n) || n <= 0 || n > 32503680000) return undefined; // after year 3000 is not a real date
+  const iso = new Date((n + 3 * 3600) * 1000).toISOString(); // Nairobi is UTC+3 all year
+  return withTime ? `${iso.slice(0, 10)} ${iso.slice(11, 16)}` : iso.slice(0, 10);
+}
+
+/**
+ * A Kentracks device record as the body `normalizeGpsDevice` reads. The detail API has no online/offline status (a
+ * later API gives it), so the status is left unknown unless the platform expiration date has passed (Expired).
+ */
+export function kentracksToRaw(r: KentracksDeviceRecord, owner?: KentracksUserInfo | null): Record<string, unknown> {
+  const name = text(r.devicename);
+  return {
+    ...(owner ? kentracksAccountRaw(owner) : {}),
+    imei: text(r.imei, 20),
+    // The model is required; a device without a type still verifies, shown by its name.
+    model: text(r.devicetype) ?? name ?? "Unknown model",
+    name,
+    plate_number: text(r.platenumber, 30),
+    sim_card: text(r.simcard, 40) ?? text(r.iccid, 40),
+    activation_date: kentracksTime(r.activatedtime, true),
+    expiry_date: kentracksTime(r.platformduetime),
+    user_expiry_date: kentracksTime(r.userduetime),
+    account: text(r.customeraccount),
+  };
 }
 
 /** Validates the IMEI, asks the client, and turns every failure into a clear outcome. */

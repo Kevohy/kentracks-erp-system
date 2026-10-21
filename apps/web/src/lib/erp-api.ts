@@ -6,6 +6,9 @@ import type { RetailerDraft } from "./retailer-validation";
 import type { PackageSaleDraft } from "./sale-validation";
 import type { Sale, SalePackage, SalesPage } from "./sales";
 import type { GpsAccountStatus, GpsPlatformInfo } from "./gps-platforms";
+import type { DashboardSummary } from "./dashboard";
+import type { PaymentDraft, SalePayments } from "./sale-payments";
+import type { VerifyOutcome } from "./gps-platform";
 
 import type { BillingCustomer, BillingFilter, BillingPage, BillingSyncResult } from "./billing";
 import type { BillingPeriod, IotBill, IotClientsPage, IotGroupsResult, IotOverview, IotRenewal, IotRenewalsResult, IotSim, IotSimsPage } from "./iot-sims";
@@ -16,6 +19,13 @@ export type { StockRow } from "./purchases";
 import type { StockRow } from "./purchases";
 
 export const erpApi = {
+  dashboard: { get: () => call<DashboardSummary>("GET", "/api/dashboard") },
+  gps: {
+    /** Verify one IMEI on the server with the company's GPS platform accounts. */
+    verify: (imei: string) => call<VerifyOutcome>("GET", `/api/gps/verify?${new URLSearchParams({ imei })}`),
+    /** How IMEIs are verified for this company: Kentracks, the development mock, or not connected. */
+    mode: () => call<{ mode: "live" | "mock" | "none"; accounts: number; platforms: string[] }>("GET", "/api/gps/mode"),
+  },
   categories: {
     list: () => call<ProductCategory[]>("GET", "/api/inventory/categories"),
     create: (name: string) => call<ProductCategory>("POST", "/api/inventory/categories", { name }),
@@ -53,6 +63,10 @@ export const erpApi = {
     createPackage: (kind: "Package Sale" | "Hosting Sale", imei: string, draft: PackageSaleDraft, clientKey: string) =>
       call<Sale>("POST", "/api/sales", { ...draft, type: kind, imei, clientKey }),
     createRetailer: (draft: RetailerDraft, clientKey: string) => call<Sale>("POST", "/api/sales", { ...draft, type: "Retailer Sale", clientKey }),
+    payments: (id: string) => call<SalePayments>("GET", `/api/sales/${id}/payments`),
+    /** `clientKey` makes a repeated submit of the same payment form return the saved payment instead of adding another. */
+    recordPayment: (id: string, draft: PaymentDraft, clientKey: string) =>
+      call<{ sale: Sale; payments: SalePayments }>("POST", `/api/sales/${id}/payments`, { ...draft, clientKey }),
   },
   billing: {
     /** One page of customers with their tracked vehicles, plus totals. */

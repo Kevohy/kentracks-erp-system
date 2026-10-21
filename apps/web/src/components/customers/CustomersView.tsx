@@ -74,8 +74,8 @@ export function CustomersView() {
                     {c.brandName ? <span className="rounded-full bg-canvas px-2.5 py-1 text-[12.5px] font-medium text-ink">{c.brandName}</span> : <span className="text-muted">—</span>}
                   </td>
                   <td className="px-4 py-3.5">{c.account}</td>
-                  <td className="whitespace-nowrap px-4 py-3.5">{c.phone}</td>
-                  <td className="px-4 py-3.5 text-muted">{c.email}</td>
+                  <td className="whitespace-nowrap px-4 py-3.5">{c.phone || <span className="text-muted">—</span>}</td>
+                  <td className="px-4 py-3.5 text-muted">{c.email || "—"}</td>
                   <td className="px-4 py-3.5">{c.location}</td>
                   <td className="px-4 py-2 pr-6 text-right">
                     <button

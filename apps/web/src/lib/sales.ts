@@ -29,6 +29,9 @@ export type PackageSale = {
   gpsAccount: string;
   /** How the IMEI was verified. "mock" means sample data, not GPSPlatform. */
   verificationSource: "mock" | "gpsplatform";
+  /** The GPS platform that verified the IMEI ("Kentracks", "iTrack"). Null for mock data, and for sales recorded before
+   * iTrack was added (those were all verified by Kentracks). */
+  verificationPlatform: string | null;
   packageId: string;
   packageName: string;
   packagePriceMinor: number;
@@ -138,14 +141,21 @@ export const saleTotalMinor = (packagePriceMinor: number): number => packagePric
 const norm = (s: string | undefined) => (s ?? "").trim().toLowerCase();
 
 /**
- * Finds the CRM customer a GPSPlatform contact belongs to. Only an exact normalised phone
- * (E.164) or case-insensitive email match counts. If the matches point at more than one
- * customer the result is ambiguous and nothing is linked automatically.
+ * Finds the CRM customer a GPS device belongs to. The device's customer account on the platform (Kentracks
+ * `customeraccount`) matching a CRM customer's account decides first: an account belongs to exactly one customer.
+ * Otherwise only an exact normalised phone (E.164) or case-insensitive email of the device contact counts. If the
+ * matches point at more than one customer the result is ambiguous and nothing is linked automatically.
  */
 export function matchCustomer(
   contact: GpsContact | undefined,
   customers: Customer[],
-): { status: "matched"; customer: Customer; by: "phone" | "email" | "phone and email" } | { status: "ambiguous" } | { status: "none" } {
+  account?: string,
+): { status: "matched"; customer: Customer; by: "account" | "phone" | "email" | "phone and email" } | { status: "ambiguous" } | { status: "none" } {
+  const acc = norm(account);
+  if (acc) {
+    const byAccount = customers.find((c) => norm(c.account) === acc);
+    if (byAccount) return { status: "matched", customer: byAccount, by: "account" };
+  }
   if (!contact) return { status: "none" };
   const phone = contact.phone ? validatePhone(contact.phone) : undefined;
   const email = contact.email ? validateEmail(contact.email) : undefined;

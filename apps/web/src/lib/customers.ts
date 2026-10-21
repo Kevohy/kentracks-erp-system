@@ -38,11 +38,14 @@ export type FieldDef = {
   placeholder: string;
   /** Spans both columns on wide screens. */
   wide?: boolean;
+  /** Short note under the label, e.g. that the field is optional. */
+  hint?: string;
 };
 
 const account: FieldDef = { name: "account", label: "Account", type: "text", placeholder: "e.g. ACC-1001 (no spaces)" };
-const phone: FieldDef = { name: "phone", label: "Phone Number", type: "tel", placeholder: "0712345678 or +254712345678" };
-const email: FieldDef = { name: "email", label: "Email", type: "email", placeholder: "name@example.com" };
+// A customer may keep one of these private: give a phone number, an email, or both.
+const phone: FieldDef = { name: "phone", label: "Phone Number", type: "tel", placeholder: "0712345678 or +254712345678", hint: "Optional if an email is given" };
+const email: FieldDef = { name: "email", label: "Email", type: "email", placeholder: "name@example.com", hint: "Optional if a phone number is given" };
 const location: FieldDef = { name: "location", label: "Location", type: "text", placeholder: "e.g. Westlands, Nairobi" };
 
 const person: FieldDef[] = [

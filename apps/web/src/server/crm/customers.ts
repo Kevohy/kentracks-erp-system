@@ -1,7 +1,7 @@
 import "server-only";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import { loadBrands } from "./brands";
-import { validateField } from "@/lib/customer-validation";
+import { validateContact, validateField } from "@/lib/customer-validation";
 import { customerTypes, fieldsByType, fromFormValues, type Customer, type CustomerType, type FieldName } from "@/lib/customers";
 import { getDb } from "./db";
 import { ApiError, isUuid, uniqueViolation } from "./http";
@@ -44,6 +44,8 @@ function columnsFrom(body: Record<string, unknown>, existingType?: CustomerType)
   const type = parseType(rest, customerTypes, existingType);
   const names = fieldsByType[type].map((f) => f.name).filter((n) => n !== "brandId");
   const clean = parseFields<FieldName>(rest, names, validateField);
+  const contact = validateContact(clean.phone ?? "", clean.email ?? "");
+  if (contact.phone) throw new ApiError(422, "Please correct the highlighted fields", contact);
   const c = fromFormValues("", type, clean);
   return {
     type,
@@ -58,9 +60,43 @@ function columnsFrom(body: Record<string, unknown>, existingType?: CustomerType)
   };
 }
 
+type Contact = { account: string; phone: string; email: string };
+const ACCOUNT_TAKEN = "This account is already used by another customer";
+const taken = (what: string, o: { name: string | null; account: string }) => `This ${what} is already used by ${o.name ?? "another customer"} (${o.account})`;
+
+/**
+ * One customer per account, per phone number and per email in a company (phones compare as E.164, emails and accounts
+ * ignore case). Checked before saving so the message can name the customer who already has it; the unique indexes
+ * (migration 0018) also stop two saves racing each other.
+ */
+async function ensureUnique(ctx: AuthContext, c: Contact, exceptId?: string) {
+  const rows = await getDb()
+    .select({ name: customers.name, account: customers.account, phone: customers.phone, email: customers.email })
+    .from(customers)
+    .where(
+      and(
+        eq(customers.tenantId, ctx.tenantId),
+        exceptId ? sql`${customers.id} <> ${exceptId}::uuid` : undefined,
+        sql`(lower(${customers.account}) = lower(${c.account})
+          OR (${c.phone} <> '' AND ${customers.phone} = ${c.phone})
+          OR (${c.email} <> '' AND lower(${customers.email}) = lower(${c.email})))`,
+      ),
+    )
+    .limit(10);
+  const errors: Record<string, string> = {};
+  for (const o of rows) {
+    if (!errors.account && o.account.toLowerCase() === c.account.toLowerCase()) errors.account = ACCOUNT_TAKEN;
+    if (!errors.phone && c.phone && o.phone === c.phone) errors.phone = taken("phone number", o);
+    if (!errors.email && c.email && o.email.toLowerCase() === c.email.toLowerCase()) errors.email = taken("email", o);
+  }
+  if (Object.keys(errors).length) throw new ApiError(409, "This customer already exists", errors);
+}
+
 function duplicateAccount(e: unknown): never {
-  if (uniqueViolation(e) === "customers_tenant_account_uq")
-    throw new ApiError(409, "This account is already used by another customer", { account: "This account is already used by another customer" });
+  const index = uniqueViolation(e);
+  if (index === "customers_tenant_account_uq") throw new ApiError(409, ACCOUNT_TAKEN, { account: ACCOUNT_TAKEN });
+  if (index === "customers_tenant_phone_uq") throw new ApiError(409, "This customer already exists", { phone: "This phone number is already used by another customer" });
+  if (index === "customers_tenant_email_uq") throw new ApiError(409, "This customer already exists", { email: "This email is already used by another customer" });
   throw e;
 }
 
@@ -79,6 +115,7 @@ export async function getCustomer(ctx: AuthContext, id: string): Promise<Custome
 export async function createCustomer(ctx: AuthContext, body: Record<string, unknown>): Promise<Customer> {
   const cols = columnsFrom(body);
   const brandId = await brandFrom(ctx, body);
+  await ensureUnique(ctx, cols);
   try {
     const [r] = await getDb().insert(customers).values({ ...cols, brandId, tenantId: ctx.tenantId }).returning();
     return (await getCustomer(ctx, r.id)) as Customer;
@@ -93,6 +130,7 @@ export async function updateCustomer(ctx: AuthContext, id: string, body: Record<
   if (!current) return null;
   const cols = columnsFrom(body, current.type);
   const brandId = await brandFrom(ctx, body, current.brandId);
+  await ensureUnique(ctx, cols, id);
   try {
     const [r] = await db
       .update(customers)

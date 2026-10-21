@@ -1,0 +1,1 @@
+ALTER TABLE "package_sales" ADD COLUMN "verification_platform" text;

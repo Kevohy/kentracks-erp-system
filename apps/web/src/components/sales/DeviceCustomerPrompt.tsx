@@ -12,12 +12,18 @@ import { Detail } from "./fields";
 export function DeviceCustomerPrompt({
   open,
   contact,
+  account,
+  accountType,
   onAddNew,
   onChooseExisting,
   onClose,
 }: {
   open: boolean;
   contact: GpsDevice["contact"];
+  /** The customer account the device belongs to on the GPS platform. */
+  account?: string;
+  /** That account's role on the platform (Kentracks account information). */
+  accountType?: string;
   onAddNew: () => void;
   onChooseExisting: () => void;
   onClose: () => void;
@@ -44,7 +50,7 @@ export function DeviceCustomerPrompt({
             Customer not found
           </h2>
           <p className="mt-1 text-[14px] text-muted">
-            {contact ? "The contact on this device does not match any customer in your CRM." : "This device has no contact details, so it cannot be matched to a customer."} Add them as a new customer or choose an existing one.
+            {account || contact ? "This device's customer account and contact do not match any customer in your CRM." : "This device has no customer account or contact details, so it cannot be matched to a customer."} Add them as a new customer or choose an existing one.
           </p>
         </div>
         <button type="button" onClick={onClose} aria-label="Close" className="grid size-11 shrink-0 place-items-center rounded-xl text-muted hover:bg-canvas">
@@ -52,11 +58,13 @@ export function DeviceCustomerPrompt({
         </button>
       </div>
 
-      {contact && (
+      {(contact || account) && (
         <dl className="mx-5 mt-4 grid gap-3 rounded-xl bg-canvas p-4">
-          {contact.name && <Detail label="Contact name" value={contact.name} />}
-          {contact.phone && <Detail label="Contact phone" value={contact.phone} />}
-          {contact.email && <Detail label="Contact email" value={contact.email} />}
+          {account && <Detail label="Customer account" value={account} />}
+          {accountType && <Detail label="Account type" value={accountType} />}
+          {contact?.name && <Detail label="Contact name" value={contact.name} />}
+          {contact?.phone && <Detail label="Contact phone" value={contact.phone} />}
+          {contact?.email && <Detail label="Contact email" value={contact.email} />}
         </dl>
       )}
 
