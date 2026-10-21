@@ -1,0 +1,2 @@
+ALTER TABLE "gps_platform_accounts" DROP CONSTRAINT "gps_platform_accounts_platform";--> statement-breakpoint
+ALTER TABLE "gps_platform_accounts" ADD CONSTRAINT "gps_platform_accounts_platform" CHECK ("gps_platform_accounts"."platform" IN ('kentracks', 'itrack'));

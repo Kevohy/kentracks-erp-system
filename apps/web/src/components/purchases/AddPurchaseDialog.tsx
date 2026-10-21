@@ -4,10 +4,12 @@ import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "rea
 import { Plus, Trash2, X } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { useInventory } from "@/components/inventory/InventoryProvider";
-import { sampleSuppliers } from "@/lib/suppliers";
+import { platformLicenceTypes, simLabel } from "@/lib/inventory";
+import { useCrmLookups } from "@/components/crm/useCrmLookups";
+import { newClientKey } from "@/lib/erp-api";
 import {
   formatKes,
-    purchaseItemTypes,
+  purchaseItemTypes,
   purchaseStatuses,
   type PurchaseItemType,
   type PurchaseStatus,
@@ -45,14 +47,21 @@ function Field({ id, label, error, className, children }: { id: string; label: s
 
 export function AddPurchaseDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { categories, products, simCards, platforms, addPurchase } = useInventory();
-  const ctx = { suppliers: sampleSuppliers, categories, products, simCards, platforms };
+  const { state: crm, retry: retryCrm } = useCrmLookups({ suppliers: true });
+  const suppliers = crm.status === "ready" ? crm.suppliers : [];
+  const ctx = { suppliers, categories, products, simCards, platforms };
 
   const ref = useRef<HTMLDialogElement>(null);
   const rowSeq = useRef(0);
-  const emptyRow = (key: string): RowDraft => ({ key, type: "", categoryId: "", itemId: "", quantity: "", unitPrice: "" });
+  const emptyRow = (key: string): RowDraft => ({ key, type: "", categoryId: "", itemId: "", cardType: "", quantity: "", unitPrice: "" });
   const newRow = () => emptyRow(`r${++rowSeq.current}`);
   const [draft, setDraft] = useState<PurchaseDraft>({ supplierId: "", status: "", date: "", notes: "", paid: "0", rows: [emptyRow("r0")] });
   const [errors, setErrors] = useState<PurchaseErrors>({});
+  const [busy, setBusy] = useState(false);
+  const [formError, setFormError] = useState("");
+  const saving = useRef(false);
+  // One key per opened form: sending the same form twice (double click, retry after a timeout) saves one purchase.
+  const clientKey = useRef(newClientKey());
 
   useEffect(() => {
     const d = ref.current;
@@ -60,6 +69,8 @@ export function AddPurchaseDialog({ open, onClose }: { open: boolean; onClose: (
     if (open && !d.open) {
       setDraft({ supplierId: "", status: "", date: "", notes: "", paid: "0", rows: [newRow()] });
       setErrors({});
+      setFormError("");
+      clientKey.current = newClientKey();
       d.showModal();
     } else if (!open && d.open) {
       d.close();
@@ -112,8 +123,9 @@ export function AddPurchaseDialog({ open, onClose }: { open: boolean; onClose: (
     });
   }
 
-  function submit(e: FormEvent) {
+  async function submit(e: FormEvent) {
     e.preventDefault();
+    if (saving.current) return;
     const { errors: found, result } = validatePurchase(draft, ctx);
     setErrors(found);
     if (!result) {
@@ -121,17 +133,21 @@ export function AddPurchaseDialog({ open, onClose }: { open: boolean; onClose: (
       els.find((el) => found[el.dataset.field ?? ""])?.focus();
       return;
     }
-    addPurchase({
-      supplierId: result.supplier.id,
-      supplierName: result.supplier.name,
-      date: result.date,
-      status: result.status,
-      notes: result.notes,
-      items: result.items,
-      totalMinor: result.totalMinor,
-      paidMinor: result.paidMinor,
-    });
-    onClose();
+    saving.current = true;
+    setBusy(true);
+    setFormError("");
+    // The server repeats every check and works out the totals itself.
+    const saved = await addPurchase(draft, clientKey.current);
+    saving.current = false;
+    setBusy(false);
+    if (saved.ok) {
+      onClose();
+      return;
+    }
+    setErrors(saved.fieldErrors);
+    setFormError(saved.message);
+    const els = Array.from(ref.current?.querySelectorAll<HTMLElement>("[data-field]") ?? []);
+    els.find((el) => saved.fieldErrors[el.dataset.field ?? ""])?.focus();
   }
 
   const total = draftTotal(draft.rows);
@@ -149,7 +165,7 @@ export function AddPurchaseDialog({ open, onClose }: { open: boolean; onClose: (
 
   const optionsFor = (r: RowDraft): { value: string; label: string }[] => {
     if (r.type === "Product") return products.filter((p) => p.categoryId === r.categoryId).map((p) => ({ value: p.id, label: p.model }));
-    if (r.type === "SIM Card") return simCards.map((s) => ({ value: s.id, label: s.name }));
+    if (r.type === "SIM Card") return simCards.map((s) => ({ value: s.id, label: simLabel(s.name, s.type) }));
     if (r.type === "Platform") return platforms.map((p) => ({ value: p.id, label: p.name }));
     return [];
   };
@@ -175,14 +191,23 @@ export function AddPurchaseDialog({ open, onClose }: { open: boolean; onClose: (
           <div className="grid gap-4 sm:grid-cols-2">
             <Field id="purchase-supplier" label="Supplier" error={errors.supplier} className="sm:col-span-2">
               <select {...common("supplier")} value={draft.supplierId} onChange={(e) => setField("supplierId", e.target.value, "supplier")}>
-                <option value="">Select…</option>
-                {sampleSuppliers.map((s) => (
+                <option value="">{crm.status === "loading" ? "Loading suppliers…" : "Select…"}</option>
+                {suppliers.map((s) => (
                   <option key={s.id} value={s.id}>
                     {s.name}
                   </option>
                 ))}
               </select>
             </Field>
+            {crm.status === "error" && (
+              <p role="alert" className="flex flex-wrap items-center gap-3 text-[13px] text-[#C62828] sm:col-span-2">
+                {crm.message}
+                <button type="button" onClick={retryCrm} className="min-h-11 rounded-xl border border-line px-4 text-[14px] font-semibold text-ink hover:bg-canvas">Try again</button>
+              </p>
+            )}
+            {crm.status === "ready" && suppliers.length === 0 && (
+              <p className="text-[13px] text-muted sm:col-span-2">No suppliers yet. Add one under CRM → Suppliers first.</p>
+            )}
             <Field id="purchase-status" label="Status" error={errors.status}>
               <select {...common("status")} value={draft.status} onChange={(e) => setStatus(e.target.value)}>
                 <option value="">Select…</option>
@@ -236,7 +261,7 @@ export function AddPurchaseDialog({ open, onClose }: { open: boolean; onClose: (
                       {...common(k("type"))}
                       value={r.type}
                       onChange={(e) =>
-                        updateRow(r.key, { type: e.target.value as PurchaseItemType | "", categoryId: "", itemId: "" }, ["type", "category", "item"])
+                        updateRow(r.key, { type: e.target.value as PurchaseItemType | "", categoryId: "", itemId: "", cardType: "" }, ["type", "category", "item", "cardType"])
                       }
                     >
                       <option value="">Select…</option>
@@ -248,28 +273,29 @@ export function AddPurchaseDialog({ open, onClose }: { open: boolean; onClose: (
                     </select>
                   </Field>
 
-                  <Field id={`purchase-${k("category")}`} label="Category" error={errors[k("category")]}>
-                    {r.type === "Product" ? (
-                      <select
-                        {...common(k("category"))}
-                        value={r.categoryId}
-                        onChange={(e) => updateRow(r.key, { categoryId: e.target.value, itemId: "" }, ["category", "item"])}
-                      >
-                        <option value="">Select…</option>
-                        {categories.map((c) => (
-                          <option key={c.id} value={c.id}>
-                            {c.name}
-                          </option>
-                        ))}
-                      </select>
-                    ) : (
-                      <div id={`purchase-${k("category")}`} className={cn(control, "flex items-center bg-canvas text-muted")}>
-                        {r.type ? "Not applicable" : "—"}
-                      </div>
-                    )}
-                  </Field>
+                  {r.type === "Product" && (
+                    <Field id={`purchase-${k("category")}`} label="Category" error={errors[k("category")]}>
+                    <select
+                      {...common(k("category"))}
+                      value={r.categoryId}
+                      onChange={(e) => updateRow(r.key, { categoryId: e.target.value, itemId: "" }, ["category", "item"])}
+                    >
+                      <option value="">Select…</option>
+                      {categories.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.name}
+                        </option>
+                      ))}
+                    </select>
+                    </Field>
+                  )}
 
-                  <Field id={`purchase-${k("item")}`} label="Model" error={errors[k("item")]}>
+                  <Field
+                    id={`purchase-${k("item")}`}
+                    label={r.type === "SIM Card" ? "SIM Card" : r.type === "Platform" ? "Platform" : "Model"}
+                    error={errors[k("item")]}
+                    className={r.type === "SIM Card" || !r.type ? "sm:col-span-2" : undefined}
+                  >
                     <select
                       {...common(k("item"))}
                       value={r.itemId}
@@ -285,6 +311,19 @@ export function AddPurchaseDialog({ open, onClose }: { open: boolean; onClose: (
                     </select>
                   </Field>
 
+                  {r.type === "Platform" && (
+                    <Field id={`purchase-${k("cardType")}`} label="Card Type" error={errors[k("cardType")]}>
+                      <select {...common(k("cardType"))} value={r.cardType} onChange={(e) => updateRow(r.key, { cardType: e.target.value }, ["cardType"])}>
+                        <option value="">Select…</option>
+                        {platformLicenceTypes.map((t) => (
+                          <option key={t} value={t}>
+                            {t}
+                          </option>
+                        ))}
+                      </select>
+                    </Field>
+                  )}
+
                   <Field id={`purchase-${k("quantity")}`} label="Quantity" error={errors[k("quantity")]}>
                     <input
                       {...common(k("quantity"))}
@@ -298,7 +337,7 @@ export function AddPurchaseDialog({ open, onClose }: { open: boolean; onClose: (
                     />
                   </Field>
 
-                  <Field id={`purchase-${k("unitPrice")}`} label="Unit Buying Price (KES)" error={errors[k("unitPrice")]}>
+                  <Field id={`purchase-${k("unitPrice")}`} label="Unit Buying Price (KES)" error={errors[k("unitPrice")]} className={r.type !== "Product" ? "sm:col-span-2" : undefined}>
                     <input
                       {...common(k("unitPrice"))}
                       type="text"
@@ -375,12 +414,17 @@ export function AddPurchaseDialog({ open, onClose }: { open: boolean; onClose: (
           </section>
         </div>
 
+        {formError && (
+          <p role="alert" className="border-t border-line px-5 py-3 text-[14px] text-[#C62828] sm:px-6">
+            {formError}
+          </p>
+        )}
         <div className="flex justify-end gap-3 border-t border-line px-5 py-4 sm:px-6">
           <button type="button" onClick={onClose} className="min-h-11 rounded-xl border border-line px-4 text-[15px] font-semibold hover:bg-canvas">
             Cancel
           </button>
-          <button type="submit" className="min-h-11 rounded-xl bg-brand px-5 text-[15px] font-semibold text-white hover:brightness-95">
-            Save Purchase
+          <button type="submit" disabled={busy} className="min-h-11 rounded-xl bg-brand px-5 text-[15px] font-semibold text-white hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-60">
+            {busy ? "Saving…" : "Save Purchase"}
           </button>
         </div>
       </form>

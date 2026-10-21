@@ -1,10 +1,14 @@
 "use client";
 
+import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { PUBLIC_PAGES } from "@/lib/auth-redirect";
 import { Sidebar } from "./Sidebar";
+import { TableLabels } from "./TableLabels";
 import { Topbar } from "./Topbar";
 
 export function AppShell({ children }: { children: ReactNode }) {
+  const pathname = usePathname();
   const [open, setOpen] = useState(false);
   const menuButtonRef = useRef<HTMLButtonElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
@@ -27,6 +31,9 @@ export function AppShell({ children }: { children: ReactNode }) {
     };
   }, [open]);
 
+  // The signed-out pages (sign in, forgot password) have their own frame: no sidebar, no top bar.
+  if (PUBLIC_PAGES.some((p) => pathname === p || pathname.startsWith(`${p}/`))) return <>{children}</>;
+
   return (
     <div className="flex min-h-screen">
       <a
@@ -46,6 +53,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         />
       )}
 
+      <TableLabels />
       <Sidebar open={open} onClose={close} closeButtonRef={closeButtonRef} />
 
       {/* Inert while the drawer is open so keyboard and screen-reader users stay inside it. */}

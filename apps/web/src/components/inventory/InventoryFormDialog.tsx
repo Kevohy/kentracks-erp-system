@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { X } from "lucide-react";
 import { cn } from "@/lib/cn";
+import type { SaveResult } from "@/lib/crm-api";
 import { sanitizeInventoryInput } from "@/lib/inventory-validation";
 import type { FieldResult } from "@/lib/validation";
 
@@ -34,12 +35,15 @@ export function InventoryFormDialog({
   idPrefix: string;
   fields: InventoryField[];
   onClose: () => void;
-  /** Receives the validated, cleaned values keyed by field name. */
-  onSave: (values: Values) => void;
+  /** Receives the validated, cleaned values keyed by field name. The dialog stays open if the server rejects them. */
+  onSave: (values: Values) => Promise<SaveResult>;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
   const [values, setValues] = useState<Values>({});
   const [errors, setErrors] = useState<Values>({});
+  const [busy, setBusy] = useState(false);
+  const [formError, setFormError] = useState("");
+  const saving = useRef(false);
 
   useEffect(() => {
     const d = ref.current;
@@ -47,6 +51,7 @@ export function InventoryFormDialog({
     if (open && !d.open) {
       setValues({});
       setErrors({});
+      setFormError("");
       d.showModal();
     } else if (!open && d.open) {
       d.close();
@@ -65,8 +70,9 @@ export function InventoryFormDialog({
     setErrors((p) => ({ ...p, [f.name]: f.validate(raw).error ?? "" }));
   }
 
-  function submit(e: FormEvent) {
+  async function submit(e: FormEvent) {
     e.preventDefault();
+    if (saving.current) return; // a second click or Enter while saving must not add another record
     const next: Values = {};
     const clean: Values = {};
     for (const f of fields) {
@@ -80,8 +86,21 @@ export function InventoryFormDialog({
       ref.current?.querySelector<HTMLElement>(`[name="${first.name}"]`)?.focus();
       return;
     }
-    onSave(clean);
-    onClose();
+    saving.current = true;
+    setBusy(true);
+    setFormError("");
+    const result = await onSave(clean);
+    saving.current = false;
+    setBusy(false);
+    if (result.ok) {
+      onClose();
+      return;
+    }
+    // Show the server's message under the field it names; anything else goes above the buttons.
+    const known = fields.filter((f) => result.fieldErrors[f.name]);
+    setErrors(Object.fromEntries(known.map((f) => [f.name, result.fieldErrors[f.name]])));
+    if (known.length) ref.current?.querySelector<HTMLElement>(`[name="${known[0].name}"]`)?.focus();
+    else setFormError(result.message);
   }
 
   const titleId = `${idPrefix}-title`;
@@ -156,6 +175,11 @@ export function InventoryFormDialog({
           })}
         </div>
 
+        {formError && (
+          <p role="alert" className="border-t border-line px-5 py-3 text-[14px] text-[#C62828] sm:px-6">
+            {formError}
+          </p>
+        )}
         <div className="flex justify-end gap-3 border-t border-line px-5 py-4 sm:px-6">
           <button
             type="button"
@@ -164,8 +188,8 @@ export function InventoryFormDialog({
           >
             Cancel
           </button>
-          <button type="submit" className="min-h-11 rounded-xl bg-brand px-5 text-[15px] font-semibold text-white hover:brightness-95">
-            {submitLabel}
+          <button type="submit" disabled={busy} className="min-h-11 rounded-xl bg-brand px-5 text-[15px] font-semibold text-white hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-60">
+            {busy ? "Saving…" : submitLabel}
           </button>
         </div>
       </form>

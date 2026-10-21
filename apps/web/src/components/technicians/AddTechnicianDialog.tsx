@@ -3,7 +3,8 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { X } from "lucide-react";
 import { cn } from "@/lib/cn";
-import { technicianFields, type Technician, type TechnicianFieldName } from "@/lib/technicians";
+import type { SaveResult } from "@/lib/crm-api";
+import { technicianFields, type TechnicianFieldName } from "@/lib/technicians";
 import { sanitizeTechnicianInput, validateTechnicianField } from "@/lib/technician-validation";
 
 type Values = Partial<Record<TechnicianFieldName, string>>;
@@ -15,11 +16,14 @@ export function AddTechnicianDialog({
 }: {
   open: boolean;
   onClose: () => void;
-  onAdd: (technician: Technician) => void;
+  onAdd: (values: Values) => Promise<SaveResult>;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
   const [values, setValues] = useState<Values>({});
   const [errors, setErrors] = useState<Values>({});
+  const saving = useRef(false);
+  const [busy, setBusy] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
 
   useEffect(() => {
     const d = ref.current;
@@ -27,6 +31,7 @@ export function AddTechnicianDialog({
     if (open && !d.open) {
       setValues({});
       setErrors({});
+      setFormError(null);
       d.showModal();
     } else if (!open && d.open) {
       d.close();
@@ -44,8 +49,9 @@ export function AddTechnicianDialog({
     setErrors((p) => ({ ...p, [name]: validateTechnicianField(name, raw).error }));
   }
 
-  function submit(e: FormEvent) {
+  async function submit(e: FormEvent) {
     e.preventDefault();
+    if (saving.current) return; // a second click or Enter while saving must not create a duplicate
     const next: Values = {};
     const clean: Values = {};
     for (const f of technicianFields) {
@@ -59,14 +65,16 @@ export function AddTechnicianDialog({
       ref.current?.querySelector<HTMLInputElement>(`[name="${first.name}"]`)?.focus();
       return;
     }
-    onAdd({
-      id: `new-${Date.now()}`,
-      name: clean.name ?? "",
-      phone: clean.phone ?? "",
-      email: clean.email ?? "",
-      location: clean.location ?? "",
-    });
-    onClose();
+    saving.current = true;
+    setBusy(true);
+    setFormError(null);
+    const r = await onAdd(clean);
+    saving.current = false;
+    setBusy(false);
+    if (r.ok) return onClose();
+    const known = Object.fromEntries(Object.entries(r.fieldErrors).filter(([k]) => technicianFields.some((f) => f.name === k))) as Values;
+    setErrors(known);
+    setFormError(Object.keys(known).length ? null : r.message);
   }
 
   return (
@@ -128,6 +136,11 @@ export function AddTechnicianDialog({
               );
             })}
           </div>
+          {formError && (
+            <p role="alert" className="text-[13.5px] text-[#C62828]">
+              {formError}
+            </p>
+          )}
         </div>
 
         <div className="flex justify-end gap-3 border-t border-line px-5 py-4 sm:px-6">
@@ -138,8 +151,8 @@ export function AddTechnicianDialog({
           >
             Cancel
           </button>
-          <button type="submit" className="min-h-11 rounded-xl bg-brand px-5 text-[15px] font-semibold text-white hover:brightness-95">
-            Save Technician
+          <button type="submit" disabled={busy} className="min-h-11 rounded-xl bg-brand px-5 text-[15px] font-semibold text-white hover:brightness-95 disabled:opacity-60">
+            {busy ? "Saving…" : "Save Technician"}
           </button>
         </div>
       </form>

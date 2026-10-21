@@ -1,0 +1,132 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1792261501504,
+      "tag": "0000_crm_initial",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1792391172496,
+      "tag": "0001_erp_inventory_purchases_sales",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1792394636212,
+      "tag": "0002_auth_users_sessions",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1792419099943,
+      "tag": "0003_platform_card_type",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1792424687308,
+      "tag": "0004_brands",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1792487594120,
+      "tag": "0005_prepaid_sim_options",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1792487746743,
+      "tag": "0006_iot_sim_billing",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1792489154372,
+      "tag": "0007_sales_history_indexes",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1792489594915,
+      "tag": "0008_new_card_renewal",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1792494618322,
+      "tag": "0009_deduct_all_stock",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1792502951395,
+      "tag": "0010_stock_per_card_type",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1792505136413,
+      "tag": "0011_billing_devices",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1792514901275,
+      "tag": "0012_iot_sims",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1792568003252,
+      "tag": "0013_old_sales",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1792570466219,
+      "tag": "0014_gps_platform_settings",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1792571194315,
+      "tag": "0015_gps_platform_accounts",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1792571204044,
+      "tag": "0016_drop_gps_platform_settings",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1792572029706,
+      "tag": "0017_gps_platform_itrack",
+      "breakpoints": true
+    }
+  ]
+}

@@ -1,5 +1,5 @@
 import { stripControlChars } from "./validation";
-import type { Product, ProductCategory, Platform, SimCard } from "./inventory";
+import { platformLicenceTypes, type PlatformCardType, type Product, type ProductCategory, type Platform, type SimCard } from "./inventory";
 import type { Supplier } from "./suppliers";
 import {
   formatKes,
@@ -73,6 +73,8 @@ export type RowDraft = {
   type: PurchaseItemType | "";
   categoryId: string;
   itemId: string;
+  /** Platform rows only. */
+  cardType: string;
   quantity: string;
   unitPrice: string;
 };
@@ -144,6 +146,7 @@ export function validatePurchase(d: PurchaseDraft, ctx: PurchaseContext): { erro
     let ok = true;
     let label = "";
     let categoryName: string | undefined;
+    let cardType: PlatformCardType | undefined;
 
     if (!r.type) {
       errors[k("type")] = "Select an item type";
@@ -168,6 +171,13 @@ export function validatePurchase(d: PurchaseDraft, ctx: PurchaseContext): { erro
       else if (!found) errors[k("item")] = "Select a valid item";
       else label = found.name;
       ok = !errors[k("item")];
+      if (r.type === "Platform") {
+        const ct = (platformLicenceTypes as readonly string[]).find((t) => t === r.cardType);
+        if (!r.cardType) errors[k("cardType")] = "Select a card type";
+        else if (!ct) errors[k("cardType")] = "Select a valid card type";
+        else cardType = ct as PlatformCardType;
+        ok = ok && !errors[k("cardType")];
+      }
     }
 
     const q = parseQuantity(r.quantity);
@@ -176,7 +186,7 @@ export function validatePurchase(d: PurchaseDraft, ctx: PurchaseContext): { erro
     if (p.error) errors[k("unitPrice")] = p.error;
 
     if (ok && q.value !== undefined && p.value !== undefined && r.type) {
-      items.push({ itemType: r.type, itemId: r.itemId, label, categoryName, quantity: q.value, unitPriceMinor: p.value });
+      items.push({ itemType: r.type, itemId: r.itemId, label, categoryName, ...(cardType ? { cardType } : {}), quantity: q.value, unitPriceMinor: p.value });
     }
   }
 

@@ -1,7 +1,7 @@
 import type { Customer } from "./customers";
 import { validateEmail, validatePhone } from "./validation";
 
-/** Types and mock data for the Sales module. Frontend only; nothing is persisted. */
+/** Types and rules for the Sales module. Records are saved by the server (src/server/erp/sales.ts). */
 
 export const saleTypes = ["Package Sale", "Hosting Sale", "Retailer Sale"] as const;
 export type SaleType = (typeof saleTypes)[number];
@@ -11,15 +11,11 @@ export type GpsContact = { name?: string; phone?: string; email?: string };
 /** A configurable package name (managed under Settings). The price is entered on each sale. */
 export type SalePackage = { id: string; name: string };
 
-/** Sample packages so the page has something to select. Names are placeholders. */
-export const samplePackages: SalePackage[] = [
-  { id: "pk1", name: "Basic" },
-  { id: "pk2", name: "Standard" },
-  { id: "pk3", name: "Premium" },
-  { id: "pk4", name: "Hosting" },
-];
 
 export const CARD_TYPES = ["New Card", "Annual Card", "Lifelong Card"] as const;
+
+/** One item this sale took out of inventory stock. */
+export type StockTaken = { itemType: "Product" | "SIM Card" | "Platform"; name: string; quantity: number };
 
 /** A completed Package or Hosting Sale. Names are copied in so the record stays readable if inventory or packages change. */
 export type PackageSale = {
@@ -38,10 +34,30 @@ export type PackageSale = {
   packagePriceMinor: number;
   /** Null for a Hosting Sale, which has no tracker line. */
   tracker: { categoryName: string; productId: string; model: string } | null;
-  licence: { platformId: string; platformName: string; cardType: string; deduction: number };
+  licence: {
+    platformId: string;
+    platformName: string;
+    cardType: string;
+    deduction: number;
+    /** New Card only: the renewal fee agreed with the customer (charged when the licence expires, not part of this sale). */
+    renewalFeeMinor: number | null;
+    /** New Card only: the platform expiration date GPSPlatform returned for the device. */
+    expirationDate: string | null;
+  };
   /** `name` is the inventory SIM card; `number` is the SIM number GPSPlatform returned for the IMEI. */
   /** `deducted` is true when one was taken out of inventory stock. */
-  sim: { id: string; name: string; number: string; deducted: boolean };
+  sim: {
+    id: string;
+    name: string;
+    number: string;
+    deducted: boolean;
+    /** Prepaid SIMs only: send the customer a monthly SMS reminder (bulk SMS, connected later). */
+    smsReminder: boolean;
+    /** Prepaid SIMs only: add the SIM to automatic airtime recharge (connected later). */
+    autoRecharge: boolean;
+    /** IoT SIMs (Local or International) are added to Billing → IoT SIM automatically (billing comes later). */
+    iotBilling: boolean;
+  };
   /** Null when no technician was assigned (optional). */
   technician: { id: string; name: string } | null;
   expensesMinor: { installation: number; transport: number; commission: number; other: { description: string; amountMinor: number }[] };
@@ -54,6 +70,12 @@ export type PackageSale = {
   costMissing: string[];
   /** Sale total minus item costs minus expenses. Negative is a loss. */
   profitMinor: number;
+  /** When the sale was completed (ISO timestamp). For an old sale, the original sale date. */
+  createdAt: string;
+  /** What this sale took out of inventory stock. */
+  stockTaken: StockTaken[];
+  /** Recorded after the fact for tracking only: no stock taken, no money, left out of revenue and profit. */
+  oldSale: boolean;
 };
 
 export type RetailerProductLine = {
@@ -92,9 +114,19 @@ export type RetailerSale = {
   /** Lines with no buying cost yet; their cost is not in `costMinor`, so the profit is incomplete. */
   costMissing: string[];
   profitMinor: number;
+  createdAt: string;
+  stockTaken: StockTaken[];
 };
 
 export type Sale = PackageSale | RetailerSale;
+
+/** One page of the sale history. */
+export type SalesPage = {
+  items: Sale[];
+  nextCursor: string | null;
+  /** Revenue, balance and profit leave out old sales (recorded for tracking only); `oldSales` counts them. */
+  totals?: { count: number; oldSales: number; revenueMinor: number; balanceMinor: number; profitMinor: number };
+};
 
 /**
  * The single pricing rule: the sale total IS the package price. The tracker, platform licence

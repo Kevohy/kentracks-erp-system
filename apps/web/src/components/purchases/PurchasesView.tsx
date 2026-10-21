@@ -1,12 +1,14 @@
 "use client";
 
-import { Fragment, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { ChevronDown } from "lucide-react";
 import { PageHeader } from "@/components/shell/PageHeader";
 import { Card } from "@/components/dashboard/Card";
+import { ListStatusRow, type ListState } from "@/components/crm/useCrmList";
 import { AddButton } from "@/components/inventory/AddButton";
 import { useInventory } from "@/components/inventory/InventoryProvider";
 import { cn } from "@/lib/cn";
+import { simLabel } from "@/lib/inventory";
 import { formatKes, itemAmountMinor, paymentState, type PurchaseStatus } from "@/lib/purchases";
 import { AddPurchaseDialog } from "./AddPurchaseDialog";
 
@@ -23,7 +25,10 @@ const dateFormat = (iso: string) => {
 const th = "px-4 py-3 font-medium";
 
 export function PurchasesView() {
-  const { purchases } = useInventory();
+  const { load, reload, purchases, purchasesLoad, ensurePurchases, reloadPurchases } = useInventory();
+  useEffect(() => ensurePurchases(), [ensurePurchases]);
+  const listState: ListState<unknown> =
+    load.status !== "ready" ? load : purchasesLoad.status === "ready" ? { status: "ready", items: purchases } : purchasesLoad;
   const [open, setOpen] = useState(false);
   const [expanded, setExpanded] = useState<string | null>(null);
 
@@ -33,8 +38,8 @@ export function PurchasesView() {
 
       <Card className="overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[880px] border-collapse text-left text-[14.5px]">
-            <caption className="sr-only">Purchases (sample data, amounts in KES)</caption>
+          <table className="stack-table w-full min-w-[880px] border-collapse text-left text-[14.5px]">
+            <caption className="sr-only">Purchases (amounts in KES)</caption>
             <thead>
               <tr className="border-b border-line text-[13px] text-muted">
                 <th scope="col" className={cn(th, "pl-6")}>Supplier</th>
@@ -49,6 +54,7 @@ export function PurchasesView() {
               </tr>
             </thead>
             <tbody>
+              <ListStatusRow state={listState} colSpan={7} empty="No purchases yet. Add a purchase to record stock." retry={() => { if (load.status !== "ready") reload(); reloadPurchases(); }} />
               {purchases.map((p) => {
                 const isOpen = expanded === p.id;
                 return (
@@ -89,7 +95,8 @@ export function PurchasesView() {
                                 <span>
                                   <span className="text-muted">{i.itemType}</span> ·{" "}
                                   {i.categoryName ? `${i.categoryName} · ` : ""}
-                                  <span className="font-medium">{i.label}</span>
+                                  <span className="font-medium">{i.simType ? simLabel(i.label, i.simType) : i.label}</span>
+                                  {i.cardType && <span className="ml-1.5 rounded-full bg-tint px-2 py-0.5 text-[12.5px] font-medium text-navy">{i.cardType}</span>}
                                 </span>
                                 <span className="tabular-nums text-muted">
                                   {i.quantity} × {formatKes(i.unitPriceMinor)} = <span className="font-semibold text-ink">{formatKes(itemAmountMinor(i))}</span>

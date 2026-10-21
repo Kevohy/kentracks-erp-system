@@ -7,21 +7,33 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
+    "db:dev-tenant": "node scripts/dev-tenant.mjs",
+    "auth:user": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/user.mts",
+    "test:crm": "node --test tests/crm-api.test.mts",
+    "test:erp": "node --test tests/erp-api.test.mts",
+    "test:auth": "node --test tests/auth-api.test.mts"
   },
   "dependencies": {
     "@fontsource-variable/jost": "^5.3.0",
+    "drizzle-orm": "^0.45.4",
     "libphonenumber-js": "^1.13.15",
     "lucide-react": "^1.59.0",
     "next": "^16.4.2",
+    "pg": "^8.23.1",
     "react": "^19.3.1",
-    "react-dom": "^19.3.1"
+    "react-dom": "^19.3.1",
+    "server-only": "^0.0.1"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.3.3",
     "@types/node": "^26.6.5",
+    "@types/pg": "^8.23.1",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
+    "drizzle-kit": "^0.31.11",
     "eslint": "^10.13.0",
     "eslint-config-next": "^16.4.2",
     "postcss": "^8.5.30",

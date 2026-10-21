@@ -4,13 +4,15 @@ import { useState } from "react";
 import { Plus } from "lucide-react";
 import { PageHeader } from "@/components/shell/PageHeader";
 import { Card } from "@/components/dashboard/Card";
-import { sampleTechnicians, type Technician } from "@/lib/technicians";
+import { crmApi } from "@/lib/crm-api";
+import { ListStatusRow, useCrmList } from "@/components/crm/useCrmList";
 import { AddTechnicianDialog } from "./AddTechnicianDialog";
 
 const columns = ["Name", "Phone Number", "Email", "Location"];
 
 export function TechniciansView() {
-  const [technicians, setTechnicians] = useState<Technician[]>(sampleTechnicians);
+  const { state, retry, prepend } = useCrmList(crmApi.technicians.list);
+  const technicians = state.status === "ready" ? state.items : [];
   const [open, setOpen] = useState(false);
 
   return (
@@ -31,8 +33,8 @@ export function TechniciansView() {
 
       <Card className="overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[640px] border-collapse text-left text-[14.5px]">
-            <caption className="sr-only">Technicians (sample data)</caption>
+          <table className="stack-table w-full min-w-[640px] border-collapse text-left text-[14.5px]">
+            <caption className="sr-only">Technicians</caption>
             <thead>
               <tr className="border-b border-line text-[13px] text-muted">
                 {columns.map((h) => (
@@ -43,6 +45,7 @@ export function TechniciansView() {
               </tr>
             </thead>
             <tbody>
+              <ListStatusRow state={state} colSpan={4} empty="No technicians yet. Use Add Technician to create the first one." retry={retry} />
               {technicians.map((t) => (
                 <tr key={t.id} className="border-b border-line last:border-b-0">
                   <th scope="row" className="px-4 py-3.5 pl-6 font-semibold">
@@ -58,7 +61,15 @@ export function TechniciansView() {
         </div>
       </Card>
 
-      <AddTechnicianDialog open={open} onClose={() => setOpen(false)} onAdd={(t) => setTechnicians((prev) => [t, ...prev])} />
+      <AddTechnicianDialog
+        open={open}
+        onClose={() => setOpen(false)}
+        onAdd={async (values) => {
+          const r = await crmApi.technicians.create(values);
+          if (r.ok) prepend(r.data);
+          return r.ok ? { ok: true } : r;
+        }}
+      />
     </>
   );
 }

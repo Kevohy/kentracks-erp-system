@@ -25,11 +25,3 @@ export const technicianFields: TechnicianFieldDef[] = [
   { name: "location", label: "Location", type: "text", placeholder: "e.g. Westlands, Nairobi", wide: true },
 ];
 
-/** Placeholder rows to demonstrate the list. Not real data. */
-export const sampleTechnicians: Technician[] = [
-  { id: "t1", name: "Samuel Kiprono", phone: "+254712000301", email: "samuel.kiprono@example.com", location: "Westlands, Nairobi" },
-  { id: "t2", name: "Mercy Atieno", phone: "+254722000302", email: "mercy.atieno@example.com", location: "Kisumu" },
-  { id: "t3", name: "Hassan Abdi", phone: "+254733000303", email: "", location: "Mombasa" },
-  { id: "t4", name: "Joyce Wambui-Kamau", phone: "+254745000304", email: "joyce.wambui@example.com", location: "Thika" },
-  { id: "t5", name: "Peter O'Connor", phone: "+254711000305", email: "", location: "Nakuru" },
-];

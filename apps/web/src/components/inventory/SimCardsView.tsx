@@ -6,12 +6,14 @@ import { Card } from "@/components/dashboard/Card";
 import { simCardTypes, type SimCardType } from "@/lib/inventory";
 import { formatKes } from "@/lib/purchases";
 import { validateSimCardName, validateSimCardType } from "@/lib/inventory-validation";
+import { ListStatusRow, type ListState } from "@/components/crm/useCrmList";
 import { AddButton } from "./AddButton";
 import { InventoryFormDialog } from "./InventoryFormDialog";
 import { useInventory } from "./InventoryProvider";
 
 export function SimCardsView() {
-  const { simCards, stockOf, addSimCard } = useInventory();
+  const { load, reload, simCards, stockOf, addSimCard } = useInventory();
+  const listState: ListState<unknown> = load.status === "ready" ? { status: "ready", items: simCards } : load;
   const [open, setOpen] = useState(false);
 
   return (
@@ -20,8 +22,8 @@ export function SimCardsView() {
 
       <Card className="overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[520px] border-collapse text-left text-[14.5px]">
-            <caption className="sr-only">SIM cards (sample data)</caption>
+          <table className="stack-table w-full min-w-[520px] border-collapse text-left text-[14.5px]">
+            <caption className="sr-only">SIM cards</caption>
             <thead>
               <tr className="border-b border-line text-[13px] text-muted">
                 <th scope="col" className="px-4 py-3 pl-6 font-medium">SIM Card Name</th>
@@ -31,6 +33,7 @@ export function SimCardsView() {
               </tr>
             </thead>
             <tbody>
+              <ListStatusRow state={listState} colSpan={4} empty="No SIM cards yet. Add one to start." retry={reload} />
               {simCards.map((c) => {
                 const s = stockOf("SIM Card", c.id);
                 return (

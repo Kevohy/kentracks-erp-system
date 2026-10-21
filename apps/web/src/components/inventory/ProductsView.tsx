@@ -5,12 +5,14 @@ import { PageHeader } from "@/components/shell/PageHeader";
 import { Card, Panel } from "@/components/dashboard/Card";
 import { formatKes } from "@/lib/purchases";
 import { validateCategoryName, validateCategorySelection, validateModel } from "@/lib/inventory-validation";
+import { ListStatusRow, type ListState } from "@/components/crm/useCrmList";
 import { AddButton } from "./AddButton";
 import { InventoryFormDialog } from "./InventoryFormDialog";
 import { useInventory } from "./InventoryProvider";
 
 export function ProductsView() {
-  const { categories, products, stockOf, addCategory, addProduct } = useInventory();
+  const { load, reload, categories, products, stockOf, addCategory, addProduct } = useInventory();
+  const listState: ListState<unknown> = load.status === "ready" ? { status: "ready", items: products } : load;
   const [dialog, setDialog] = useState<"product" | "category" | null>(null);
   const close = () => setDialog(null);
   const categoryName = (id: string) => categories.find((c) => c.id === id)?.name ?? "—";
@@ -22,8 +24,8 @@ export function ProductsView() {
       <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_320px]">
         <Card className="overflow-hidden">
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[520px] border-collapse text-left text-[14.5px]">
-              <caption className="sr-only">Products (sample data)</caption>
+            <table className="stack-table w-full min-w-[520px] border-collapse text-left text-[14.5px]">
+              <caption className="sr-only">Products</caption>
               <thead>
                 <tr className="border-b border-line text-[13px] text-muted">
                   <th scope="col" className="px-4 py-3 pl-6 font-medium">Category</th>
@@ -33,6 +35,7 @@ export function ProductsView() {
                 </tr>
               </thead>
               <tbody>
+                <ListStatusRow state={listState} colSpan={4} empty="No products yet. Add a category, then add a product." retry={reload} />
                 {products.map((p) => {
                   const s = stockOf("Product", p.id);
                   return (

@@ -1,6 +1,6 @@
 import type { Customer } from "./customers";
 import type { Platform, Product, ProductCategory } from "./inventory";
-import type { PurchaseItemType, StockEntry } from "./purchases";
+import type { StockLookup } from "./purchases";
 import { parseMoney, parseQuantity } from "./purchase-validation";
 import { formatKes } from "./sales-format";
 import { CARD_TYPES, type RetailerCardLine, type RetailerProductLine, type RetailerSale } from "./sales";
@@ -32,7 +32,7 @@ export type RetailerContext = {
   products: Product[];
   platforms: Platform[];
   /** Stock and latest buying price from Purchases. */
-  stockOf: (type: PurchaseItemType, id: string) => StockEntry;
+  stockOf: StockLookup;
 };
 
 /** Error keys: customer, items, paid, `p-<key>-category|product|quantity|price`, `c-<key>-platform|cardType|quantity|price`. */
@@ -95,7 +95,7 @@ export function liveTotals(d: RetailerDraft, ctx: RetailerContext): LiveTotals {
   }
   for (const l of d.cardLines) {
     const platform = ctx.platforms.find((p) => p.id === l.platformId);
-    const unitCostMinor = platform ? ctx.stockOf("Platform", platform.id).latestPriceMinor : undefined;
+    const unitCostMinor = platform && l.cardType ? ctx.stockOf("Platform", platform.id, l.cardType).latestPriceMinor : undefined;
     const t = lineTotalMinor(l.quantity, l.unitPrice);
     cards[l.key] = { totalMinor: t, unitCostMinor };
     if (t === undefined) continue;
@@ -107,7 +107,7 @@ export function liveTotals(d: RetailerDraft, ctx: RetailerContext): LiveTotals {
   return { products, cards, totalMinor, costMinor, costMissing, hasLines, profitMinor: totalMinor - costMinor };
 }
 
-export function validateRetailerSale(d: RetailerDraft, ctx: RetailerContext): { errors: RetailerErrors; result?: Omit<RetailerSale, "id"> } {
+export function validateRetailerSale(d: RetailerDraft, ctx: RetailerContext): { errors: RetailerErrors; result?: Omit<RetailerSale, "id" | "createdAt" | "stockTaken"> } {
   const errors: RetailerErrors = {};
 
   const customer = ctx.customers.find((c) => c.id === d.customerId);
@@ -115,6 +115,8 @@ export function validateRetailerSale(d: RetailerDraft, ctx: RetailerContext): { 
   else if (!customer) errors.customer = "Select a valid customer";
 
   const productLines: RetailerProductLine[] = [];
+  // Quantity of each product asked for so far, so several lines of the same model cannot sell more than is in stock.
+  const wanted = new Map<string, number>();
   for (const l of d.productLines) {
     if (isBlankProduct(l)) continue; // an untouched line is ignored
     const k = (f: string) => `p-${l.key}-${f}`;
@@ -129,7 +131,13 @@ export function validateRetailerSale(d: RetailerDraft, ctx: RetailerContext): { 
     const p = parseMoney(l.unitPrice, "Unit selling price", MAX_UNIT_PRICE_MINOR);
     if (p.error) errors[k("price")] = p.error;
     else if (p.value === 0) errors[k("price")] = "Unit selling price must be greater than zero";
-    if (!category || !product || q.value === undefined || p.value === undefined || errors[k("price")]) continue;
+    if (product && q.value !== undefined) {
+      const total = (wanted.get(product.id) ?? 0) + q.value;
+      wanted.set(product.id, total);
+      const inStock = ctx.stockOf("Product", product.id).quantity;
+      if (total > inStock) errors[k("quantity")] = inStock < 1 ? `${product.model} is out of stock` : `Only ${inStock} ${product.model} in stock`;
+    }
+    if (!category || !product || q.value === undefined || p.value === undefined || errors[k("price")] || errors[k("quantity")]) continue;
     productLines.push({
       categoryName: category.name,
       productId: product.id,
@@ -142,6 +150,7 @@ export function validateRetailerSale(d: RetailerDraft, ctx: RetailerContext): { 
   }
 
   const cardLines: RetailerCardLine[] = [];
+  const wantedCards = new Map<string, number>();
   for (const l of d.cardLines) {
     if (isBlankCard(l)) continue;
     const k = (f: string) => `c-${l.key}-${f}`;
@@ -155,7 +164,15 @@ export function validateRetailerSale(d: RetailerDraft, ctx: RetailerContext): { 
     const p = parseMoney(l.unitPrice, "Unit selling price", MAX_UNIT_PRICE_MINOR);
     if (p.error) errors[k("price")] = p.error;
     else if (p.value === 0) errors[k("price")] = "Unit selling price must be greater than zero";
-    if (!platform || errors[k("cardType")] || q.value === undefined || p.value === undefined || errors[k("price")]) continue;
+    // Stock is per card type; several lines of the same platform and card type share it.
+    if (platform && l.cardType && !errors[k("cardType")] && q.value !== undefined) {
+      const bucket = `${platform.id}:${l.cardType}`;
+      const total = (wantedCards.get(bucket) ?? 0) + q.value;
+      wantedCards.set(bucket, total);
+      const left = ctx.stockOf("Platform", platform.id, l.cardType).quantity;
+      if (total > left) errors[k("quantity")] = left <= 0 ? `${platform.name} has no ${l.cardType}s in stock` : `Only ${left} ${platform.name} ${l.cardType}s in stock`;
+    }
+    if (!platform || errors[k("cardType")] || q.value === undefined || p.value === undefined || errors[k("price")] || errors[k("quantity")]) continue;
     cardLines.push({
       platformId: platform.id,
       platformName: platform.name,
@@ -163,7 +180,7 @@ export function validateRetailerSale(d: RetailerDraft, ctx: RetailerContext): { 
       quantity: q.value,
       unitPriceMinor: p.value,
       lineTotalMinor: q.value * p.value,
-      unitCostMinor: ctx.stockOf("Platform", platform.id).latestPriceMinor,
+      unitCostMinor: ctx.stockOf("Platform", platform.id, l.cardType).latestPriceMinor,
     });
   }
 
