@@ -12,14 +12,14 @@ import {
   type BillingTotals,
   type BillingVehicle,
 } from "@/lib/billing";
-import { verifyDevice, type GpsStatus } from "@/lib/gps-platform";
+import type { GpsStatus } from "@/lib/gps-platform";
 import type { AuthContext } from "../crm/auth";
 import { getDb } from "../crm/db";
 import { isUuid } from "../crm/http";
 import { Reader, throwValidation, type Body } from "./body";
 import { parseMoney } from "@/lib/purchase-validation";
 import { MAX_AMOUNT_MINOR } from "@/lib/sale-validation";
-import { serverGpsClient } from "./gps";
+import { verifyImeisOnServer } from "./gps";
 
 const PAGE_MAX = 50;
 const SYNC_MAX_CUSTOMERS = 50;
@@ -31,7 +31,7 @@ const SYNC_CONCURRENCY = 6;
  * with the expiry date billing works from: GPSPlatform's latest date, else the one recorded at sale.
  * A Lifelong Card never expires.
  */
-const devices = (tenantId: string) => sql`
+export const billingDevices = (tenantId: string) => sql`
   SELECT DISTINCT ON (ps.imei)
     ps.*, s.customer_id, s.type AS sale_type, s.created_at AS sold_at,
     CASE WHEN ps.card_type = 'Lifelong Card' THEN NULL
@@ -121,7 +121,7 @@ async function loadCustomers(tenantId: string, ids: string[]): Promise<BillingCu
       WHERE c.tenant_id = ${tenantId} AND c.id IN (${idList})`),
     db.execute<VehicleRow>(sql`
       SELECT v.*, v.expires::text AS expires_text, v.renewal_fee_minor::text AS renewal_text, sc.type::text AS sim_type
-      FROM (${devices(tenantId)}) v LEFT JOIN sim_cards sc ON sc.id = v.sim_card_id
+      FROM (${billingDevices(tenantId)}) v LEFT JOIN sim_cards sc ON sc.id = v.sim_card_id
       WHERE v.customer_id IN (${idList})
       ORDER BY v.vehicle_plate, v.imei`),
   ]);
@@ -158,7 +158,7 @@ export async function listBillingPage(ctx: AuthContext, url: URL): Promise<Billi
     : sql`TRUE`;
   // The search may match a customer through one vehicle; their other vehicles still count.
   const scope = sql`
-    WITH v AS (${devices(ctx.tenantId)}),
+    WITH v AS (${billingDevices(ctx.tenantId)}),
     hit AS (SELECT DISTINCT c.id FROM customers c JOIN v ON v.customer_id = c.id WHERE c.tenant_id = ${ctx.tenantId} AND ${search}),
     sv AS (SELECT v.* FROM v JOIN hit ON hit.id = v.customer_id)`;
 
@@ -227,7 +227,7 @@ export async function syncBilling(ctx: AuthContext, body: Body): Promise<Billing
   const db = getDb();
 
   const due = await db.execute<{ sale_id: string; imei: string }>(sql`
-    SELECT v.sale_id, v.imei FROM (${devices(ctx.tenantId)}) v
+    SELECT v.sale_id, v.imei FROM (${billingDevices(ctx.tenantId)}) v
     WHERE v.customer_id IN (${idList})
       ${force ? sql`` : sql`AND (v.gps_synced_at IS NULL OR v.gps_synced_at < now() - make_interval(secs => ${LIVE_REFRESH_SECONDS - 5}))`}
     LIMIT ${SYNC_MAX_DEVICES}`);
@@ -235,8 +235,10 @@ export async function syncBilling(ctx: AuthContext, body: Body): Promise<Billing
   let checked = 0;
   let failed = 0;
   let message: string | undefined;
+  // One lookup for all the devices (Kentracks takes 100 IMEIs per request).
+  const results = await verifyImeisOnServer(ctx.tenantId, due.rows.map((d) => d.imei));
   await pool(due.rows, SYNC_CONCURRENCY, async (d) => {
-    const r = await verifyDevice(serverGpsClient, d.imei);
+    const r = results.get(d.imei) ?? { ok: false as const, code: "api-error" as const, message: "The device could not be checked." };
     if (!r.ok) {
       failed++;
       message ??= r.message;

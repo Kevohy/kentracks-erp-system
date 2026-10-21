@@ -13,6 +13,7 @@
 import assert from "node:assert/strict";
 import { before, describe, it } from "node:test";
 import { makeSessions } from "./session.mts";
+import { freshEmail, freshPhone } from "./contacts.mts";
 
 const A = process.env.CRM_TEST_BASE_URL;
 const B = process.env.CRM_TEST_OTHER_URL;
@@ -92,7 +93,7 @@ const sale = (over: Json = {}) => ({
 
 before(async () => {
   fx.supplier = (await req(A, "POST", "/api/crm/suppliers", { type: "Individual", fullName: `Supplier ${runL}`, phone: "0711000111", email: `s${run}@example.com`, location: "Nairobi" })).data;
-  fx.customer = (await req(A, "POST", "/api/crm/customers", { brandId: BRAND, type: "End User", firstName: "Sale", lastName: "Customer", account: `S-${run}`, phone: "0711222333", email: `c${run}@example.com`, location: "Nairobi" })).data;
+  fx.customer = (await req(A, "POST", "/api/crm/customers", { brandId: BRAND, type: "End User", firstName: "Sale", lastName: "Customer", account: `S-${run}`, phone: freshPhone(), email: freshEmail("sale"), location: "Nairobi" })).data;
   fx.tech = (await req(A, "POST", "/api/crm/technicians", { name: `Tech ${runL}`, phone: "0722000111", email: "", location: "Nairobi" })).data;
   assert.ok(fx.supplier?.id && fx.customer?.id && fx.tech?.id, `CRM fixtures were created: ${JSON.stringify([fx.supplier, fx.customer, fx.tech])}`);
   fx.cat = await getOrCreate("/api/inventory/categories", { name: "GPS Trackers" }, (c) => c.name.toLowerCase() === "gps trackers");
@@ -358,6 +359,7 @@ describe("package sales", () => {
     assert.equal(s.packageName, "Basic");
     assert.equal(s.tracker.model, fx.tracker.model);
     assert.equal(s.verificationSource, "mock");
+    assert.equal(s.verificationPlatform, null, "mock data names no platform");
     assert.deepEqual(s.technician, { id: fx.tech.id, name: fx.tech.name });
     assert.deepEqual(s.expensesMinor.other, [{ description: "Cable", amountMinor: 5000 }]);
     assert.equal(s.sim.deducted, true, "every sale takes its SIM card out of stock");
@@ -498,6 +500,17 @@ describe("package sales", () => {
     const manual = await a("POST", "/api/sales", sale({ imei: MOCK_PHONE_IMEI, customerId: fx.customer.id, customerLink: "manual" }));
     assert.equal(manual.status, 201);
   });
+  it("links a customer automatically when the device's platform account is their CRM account", async () => {
+    const dev = imei(); // the test platform gives this device the customer account "test-<last 6 digits>"
+    const owner = (await req(A, "POST", "/api/crm/customers", { brandId: BRAND, type: "End User", firstName: "Account", lastName: "Owner", account: `test-${dev.slice(-6)}`, phone: freshPhone(), email: "", location: "Nairobi" })).data;
+    assert.ok(owner?.id, JSON.stringify(owner));
+    const ok = await a("POST", "/api/sales", sale({ imei: dev, customerId: owner.id, customerLink: "automatic" }));
+    assert.equal(ok.status, 201, ok.text);
+    assert.deepEqual([ok.data.customerLink, ok.data.gpsAccount], ["automatic", `test-${dev.slice(-6)}`]);
+    const other = await a("POST", "/api/sales", sale({ imei: imei(), customerId: owner.id, customerLink: "automatic" }));
+    assert.equal(other.status, 422, "another device's account does not match this customer");
+    assert.match(other.data.errors.customer, /does not match/);
+  });
   it("keeps names as they were when inventory or packages are renamed later", async () => {
     const pkg = (await a("POST", "/api/settings/packages", { name: `Old ${run}` })).data;
     const s = (await a("POST", "/api/sales", sale({ packageId: pkg.id }))).data;
@@ -515,7 +528,7 @@ describe("package sales", () => {
 
 describe("records used by sales and purchases", () => {
   it("cannot be deleted from the CRM while a sale or purchase uses them", async () => {
-    const c = (await req(A, "POST", "/api/crm/customers", { brandId: BRAND, type: "End User", firstName: "Used", lastName: "Customer", account: `U-${run}`, phone: "0711999888", email: `u${run}@example.com`, location: "Nairobi" })).data;
+    const c = (await req(A, "POST", "/api/crm/customers", { brandId: BRAND, type: "End User", firstName: "Used", lastName: "Customer", account: `U-${run}`, phone: freshPhone(), email: freshEmail("used"), location: "Nairobi" })).data;
     const sup = (await req(A, "POST", "/api/crm/suppliers", { type: "Individual", fullName: `Used Supplier ${runL}`, phone: "0711999777", email: `us${run}@example.com`, location: "Nairobi" })).data;
     assert.equal((await a("POST", "/api/sales", sale({ customerId: c.id }))).status, 201);
     assert.equal((await a("POST", "/api/purchases", purchaseBody({ supplierId: sup.id, rows: [prow("SIM Card", fx.psim.id, "1", "1")] }))).status, 201);
@@ -638,7 +651,7 @@ describe("retailer sales", () => {
 
 describe("brands", { skip: !B }, () => {
   const b = (m: string, p: string, body?: unknown) => req(B!, m, p, body);
-  const person = (over: Json = {}) => ({ type: "End User", firstName: "Brand", lastName: `Tester${runL}`, account: `BR-${run}${seq++}`, phone: "0712345678", email: "brand@example.com", location: "Nairobi", ...over });
+  const person = (over: Json = {}) => ({ type: "End User", firstName: "Brand", lastName: `Tester${runL}`, account: `BR-${run}${seq++}`, phone: freshPhone(), email: freshEmail("brand"), location: "Nairobi", ...over });
   it("starts every company with Protrack and Kentracks", async () => {
     const list = (await a("GET", "/api/settings/brands")).data as Json[];
     const names = list.map((x) => x.name);
@@ -1057,5 +1070,93 @@ describe("old sales (record only)", () => {
     const r = await a("POST", "/api/sales", sale({ oldSale: false, price: "", deduction: "" }));
     assert.equal(r.status, 422);
     assert.ok(r.data.errors.price && r.data.errors.deduction);
+  });
+});
+
+describe("sale payments (Record payment)", () => {
+  const P = (id: string) => `/api/sales/${id}/payments`;
+  const pay = (id: string, over: Json = {}, base = A) => req(base, "POST", P(id), { amount: "1000", method: "M-Pesa", reference: "", note: "", paidOn: today(), clientKey: key(), ...over });
+  const today = () => new Date(Date.now() + 3 * 3600_000).toISOString().slice(0, 10);
+  const day = (offset: number) => new Date(Date.now() + 3 * 3600_000 + offset * 86_400_000).toISOString().slice(0, 10);
+  const balanceTotal = async () => (await a("GET", "/api/sales/history?limit=1")).data.totals.balanceMinor as number;
+
+  it("a sale not paid in full lists what was paid at the sale and its balance", async () => {
+    const s = (await a("POST", "/api/sales", sale({ price: "12000", paid: "5000" }))).data;
+    const r = await a("GET", P(s.id));
+    assert.equal(r.status, 200, r.text);
+    assert.deepEqual(r.data, { atSaleMinor: 500000, payments: [], totalMinor: 1200000, paidMinor: 500000, balanceMinor: 700000 });
+  });
+
+  it("checks the amount, method and date with the same rules as the form", async () => {
+    const s = (await a("POST", "/api/sales", sale({ price: "12000", paid: "5000" }))).data;
+    const err = async (over: Json) => (await pay(s.id, over)).data.errors as Json;
+    assert.match((await err({ amount: "" })).amount, /required/);
+    assert.match((await err({ amount: "0" })).amount, /more than 0/);
+    assert.match((await err({ amount: "-5" })).amount, /negative/);
+    assert.match((await err({ amount: "7000.01" })).amount, /cannot be more than the balance \(KES 7,000\.00\)/);
+    assert.match((await err({ amount: "12.345" })).amount, /2 decimal/);
+    assert.match((await err({ method: "" })).method, /Select how it was paid/);
+    assert.match((await err({ method: "Bitcoin" })).method, /Select how it was paid/);
+    assert.match((await err({ paidOn: day(1) })).paidOn, /future/);
+    assert.match((await err({ paidOn: day(-1) })).paidOn, /before the sale/);
+    assert.match((await err({ paidOn: "2026-02-30" })).paidOn, /valid date/);
+    assert.match((await err({ reference: "x".repeat(61) })).reference, /60/);
+    assert.equal((await pay(s.id, { extra: "1" })).status, 422, "unknown fields are refused");
+    assert.equal((await a("GET", P(s.id))).data.paidMinor, 500000, "nothing was saved");
+  });
+
+  it("records payments until the sale is paid in full, never past it", async () => {
+    const s = (await a("POST", "/api/sales", sale({ price: "12000", paid: "5000" }))).data;
+    const before = await balanceTotal();
+    const k = key();
+    const first = await pay(s.id, { amount: "2,000", method: "M-Pesa", reference: "  SJK3H2 ", note: "Second instalment", clientKey: k });
+    assert.equal(first.status, 200, first.text);
+    assert.equal(first.data.sale.paidMinor, 700000);
+    assert.equal(first.data.sale.profitMinor, s.profitMinor, "profit does not change");
+    assert.equal(first.data.sale.totalMinor, s.totalMinor, "revenue does not change");
+    const p1 = first.data.payments.payments[0];
+    assert.deepEqual([p1.amountMinor, p1.method, p1.reference, p1.note, p1.paidOn], [200000, "M-Pesa", "SJK3H2", "Second instalment", today()]);
+    assert.ok(p1.recordedBy, "who recorded it");
+    assert.deepEqual([first.data.payments.atSaleMinor, first.data.payments.balanceMinor], [500000, 500000]);
+    assert.equal(await balanceTotal(), before - 200000, "the outstanding balance in the history drops by the payment");
+
+    const again = await pay(s.id, { amount: "2000", clientKey: k });
+    assert.equal(again.status, 200);
+    assert.equal(again.data.sale.paidMinor, 700000, "the same form sent twice is saved once");
+    assert.equal(again.data.payments.payments.length, 1);
+
+    // Two people paying the rest at the same moment: only one fits in the balance.
+    const both = await Promise.all([pay(s.id, { amount: "5000" }), pay(s.id, { amount: "5000" })]);
+    assert.deepEqual(both.map((r) => r.status).sort(), [200, 422], both.map((r) => r.text).join(" | "));
+    const after = await a("GET", P(s.id));
+    assert.deepEqual([after.data.paidMinor, after.data.balanceMinor, after.data.payments.length], [1200000, 0, 2]);
+    const full = await a("GET", `/api/sales/${s.id}`);
+    assert.equal(full.data.paidMinor, full.data.totalMinor, "paid in full");
+    const more = await pay(s.id, { amount: "1" });
+    assert.equal(more.status, 422);
+    assert.match(more.text, /already paid in full/);
+  });
+
+  it("an old sale has nothing to collect; an unknown sale is not found", async () => {
+    const sim = await newSim(`PaySim ${run}`, 0);
+    const old = (await a("POST", "/api/sales", sale({ oldSale: true, saleDate: "2024-03-01", simId: sim.id, deduction: "", price: "", paid: "" }))).data;
+    const r = await pay(old.id, { amount: "1" });
+    assert.equal(r.status, 422);
+    assert.match(r.text, /old sale/i);
+    assert.equal((await a("GET", P("00000000-0000-4000-8000-000000000000"))).status, 404);
+    assert.equal((await pay("00000000-0000-4000-8000-000000000000")).status, 404);
+    assert.equal((await a("GET", P("not-a-uuid"))).status, 404);
+  });
+
+  it("another company cannot see or pay this company's sales", { skip: !B }, async () => {
+    const s = (await a("POST", "/api/sales", sale({ price: "12000", paid: "0" }))).data;
+    assert.equal((await req(B!, "GET", P(s.id))).status, 404);
+    assert.equal((await pay(s.id, { amount: "100" }, B!)).status, 404);
+    assert.equal((await a("GET", P(s.id))).data.paidMinor, 0, "untouched");
+  });
+
+  it("needs a session", { skip: !UNAUTH }, async () => {
+    assert.equal((await req(UNAUTH!, "GET", P("00000000-0000-4000-8000-000000000000"))).status, 401);
+    assert.equal((await req(UNAUTH!, "POST", P("00000000-0000-4000-8000-000000000000"), {})).status, 401);
   });
 });

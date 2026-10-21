@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, type RefObject } from "react";
-import { sanitizeAccountInput, sanitizePhoneInput, validateField } from "@/lib/customer-validation";
+import { CONTACT_REQUIRED, sanitizeAccountInput, sanitizePhoneInput, validateContact, validateField } from "@/lib/customer-validation";
 import { fieldsByType, type CustomerType, type FieldName } from "@/lib/customers";
 import type { Values } from "./CustomerFields";
 
@@ -17,7 +17,10 @@ export function useCustomerForm(dialogRef: RefObject<HTMLDialogElement | null>) 
   function change(name: FieldName, raw: string) {
     const value = name === "account" ? sanitizeAccountInput(raw) : name === "phone" ? sanitizePhoneInput(raw) : raw;
     setValues((p) => ({ ...p, [name]: value }));
-    if (errors[name]) setErrors((p) => ({ ...p, [name]: undefined }));
+    // Typing a phone or an email also clears the "phone or email" message on the other field.
+    const other = name === "phone" ? "email" : name === "email" ? "phone" : null;
+    if (errors[name] || (other && errors[other] === CONTACT_REQUIRED))
+      setErrors((p) => ({ ...p, [name]: undefined, ...(other && p[other] === CONTACT_REQUIRED ? { [other]: undefined } : {}) }));
   }
 
   function blur(name: FieldName) {
@@ -38,6 +41,7 @@ export function useCustomerForm(dialogRef: RefObject<HTMLDialogElement | null>) 
       if (r.error) next[f.name] = r.error;
       clean[f.name] = r.value;
     }
+    if (!next.phone && !next.email) Object.assign(next, validateContact(clean.phone ?? "", clean.email ?? ""));
     const brand = validateField("brandId", values.brandId ?? "");
     if (brand.error) next.brandId = brand.error;
     clean.brandId = brand.value;
@@ -52,7 +56,7 @@ export function useCustomerForm(dialogRef: RefObject<HTMLDialogElement | null>) 
 
   /** Shows errors the server reported against form fields (e.g. a duplicate account) and focuses the first. */
   function applyServerErrors(fieldErrors: Record<string, string>) {
-    const known = Object.fromEntries(Object.entries(fieldErrors).filter(([k]) => k in values || k === "account")) as Values;
+    const known = Object.fromEntries(Object.entries(fieldErrors).filter(([k]) => k in values || k === "account" || k === "phone" || k === "email")) as Values;
     setErrors(known);
     const first = Object.keys(known)[0];
     if (first) dialogRef.current?.querySelector<HTMLInputElement>(`[name="${first}"]`)?.focus();

@@ -58,6 +58,7 @@ export function CustomerFields({
           <div key={`${type}-${f.name}`} className={cn("flex flex-col gap-1.5", f.wide && "sm:col-span-2")}>
             <label htmlFor={id} className="text-[13.5px] font-medium">
               {f.label}
+              {f.hint && <span className="ml-1.5 font-normal text-muted">({f.hint})</span>}
             </label>
             <input
               id={id}

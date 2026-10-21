@@ -210,6 +210,8 @@ export const packageSales = pgTable(
     vehiclePlate: text("vehicle_plate").notNull().default(""),
     gpsAccount: text("gps_account").notNull().default(""),
     verificationSource: verificationSource("verification_source").notNull(),
+    /** The GPS platform that verified the IMEI ("Kentracks", "iTrack"); null for mock data and older sales. */
+    verificationPlatform: text("verification_platform"),
     packageId: uuid("package_id").notNull().references(() => salePackages.id, { onDelete: "restrict" }),
     packageName: text("package_name").notNull(),
     /** Null for a Hosting Sale, which has no tracker line. */
@@ -347,6 +349,40 @@ export const stockAdjustments = pgTable(
     check("stock_adjustments_one_target", itemShape(t.itemType, t.productId, t.simCardId, t.platformId)),
     check("stock_adjustments_card_type", sql`${t.cardType} IS NULL OR ${t.itemType} = 'Platform'`),
     check("stock_adjustments_quantity", sql`${t.quantity} > 0`),
+  ],
+);
+
+// ------------------------------------------------------------- sale payments
+
+/**
+ * Money received after a sale for the part not paid at the time (Sales → sale → Record payment). Each payment adds to
+ * sales.paid_minor in the same transaction, and the total paid can never pass the sale total (sales_amounts). The
+ * amount paid when the sale was made is sales.paid_minor minus these payments.
+ */
+export const salePayments = pgTable(
+  "sale_payments",
+  {
+    id: id(),
+    tenantId: tenantId(),
+    saleId: uuid("sale_id").notNull().references(() => sales.id, { onDelete: "cascade" }),
+    /** Chosen by the browser per payment form, so a repeated submit returns the same payment instead of adding another. */
+    clientKey: text("client_key"),
+    amountMinor: money("amount_minor").notNull(),
+    method: text("method").notNull(),
+    reference: text("reference").notNull().default(""),
+    note: text("note").notNull().default(""),
+    /** The day the money was received (Nairobi). */
+    paidOn: date("paid_on", { mode: "string" }).notNull(),
+    /** The signed-in user who recorded it. */
+    createdBy: uuid("created_by"),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index("sale_payments_tenant_sale_idx").on(t.tenantId, t.saleId, t.createdAt),
+    uniqueIndex("sale_payments_tenant_client_key_uq").on(t.tenantId, t.clientKey).where(sql`${t.clientKey} IS NOT NULL`),
+    check("sale_payments_amount", sql`${t.amountMinor} > 0 AND ${t.amountMinor} <= 100000000000`),
+    check("sale_payments_method", sql`${t.method} IN ('Cash', 'M-Pesa', 'Bank transfer', 'Cheque', 'Card', 'Other')`),
+    check("sale_payments_text", sql`char_length(${t.reference}) <= 60 AND char_length(${t.note}) <= 300`),
   ],
 );
 

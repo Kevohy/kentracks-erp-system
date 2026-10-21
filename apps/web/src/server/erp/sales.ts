@@ -96,6 +96,7 @@ async function buildSales(tenantId: string, rows: SaleRow[]): Promise<Sale[]> {
       vehiclePlate: d.vehiclePlate,
       gpsAccount: d.gpsAccount,
       verificationSource: d.verificationSource,
+      verificationPlatform: d.verificationPlatform,
       packageId: d.packageId,
       packageName: d.packageName,
       packagePriceMinor: s.totalMinor,
@@ -261,7 +262,7 @@ async function createPackageSale(ctx: AuthContext, body: Body, kind: "Package Sa
   r.done();
 
   // The server checks the IMEI itself; device details sent by the browser are never used.
-  const verification = await verifyImeiOnServer(imei);
+  const verification = await verifyImeiOnServer(ctx.tenantId, imei);
 
   const db = getDb();
   return db.transaction(async (tx) => {
@@ -299,19 +300,22 @@ async function createPackageSale(ctx: AuthContext, body: Body, kind: "Package Sa
     });
     if (!verification.ok) errors.imei = verification.message;
 
-    // "Automatic" means the device contact matched this customer; check that instead of trusting the browser.
+    // "Automatic" means the device's platform account or contact matched this customer; check that instead of
+    // trusting the browser.
     if (draft.customerLink === "automatic" && verification.ok && customerList[0] && !errors.customer) {
       const contact = verification.device.contact;
+      const account = verification.device.account;
       const phone = contact?.phone ? validatePhone(contact.phone) : undefined;
       const email = contact?.email ? validateEmail(contact.email) : undefined;
       const conditions = [
+        account ? sql`lower(${customers.account}) = lower(${account})` : undefined,
         phone && !phone.error ? eq(customers.phone, phone.value) : undefined,
         email && !email.error ? sql`lower(${customers.email}) = lower(${email.value})` : undefined,
       ].filter((c) => c !== undefined);
       const candidates = conditions.length
         ? await tx.select().from(customers).where(and(eq(customers.tenantId, ctx.tenantId), or(...conditions))).limit(50)
         : [];
-      const match = matchCustomer(contact, candidates.map((r) => toCustomer(r)));
+      const match = matchCustomer(contact, candidates.map((r) => toCustomer(r)), account);
       if (match.status !== "matched" || match.customer.id !== customerList[0].id) errors.customer = "This customer does not match the device contact. Choose the customer manually";
     }
     if (Object.keys(errors).length || !result) throwValidation(errors);
@@ -340,6 +344,7 @@ async function createPackageSale(ctx: AuthContext, body: Body, kind: "Package Sa
       vehiclePlate: result.vehiclePlate,
       gpsAccount: result.gpsAccount,
       verificationSource: result.verificationSource,
+      verificationPlatform: result.verificationPlatform,
       packageId: result.packageId,
       packageName: result.packageName,
       trackerProductId: result.tracker?.productId ?? null,

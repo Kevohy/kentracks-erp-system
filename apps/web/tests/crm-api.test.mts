@@ -10,6 +10,7 @@
  */
 import assert from "node:assert/strict";
 import { after, describe, it } from "node:test";
+import { e164, freshEmail, freshPhone } from "./contacts.mts";
 import { makeSessions } from "./session.mts";
 
 const A = process.env.CRM_TEST_BASE_URL;
@@ -37,18 +38,19 @@ const created: string[] = [];
 const track = (path: string, id: unknown) => created.push(`${path}/${id}`);
 after(async () => { for (const p of created) await api("DELETE", p); });
 
-const person = (over: Json = {}) => ({ type: "End User", firstName: "Test", lastName: "Person", account: `T-${run}-1`, phone: "0712345678", email: "test.person@example.com", location: "Nairobi", brandId: BRAND, ...over });
-const company = (over: Json = {}) => ({ type: "Company", companyName: "Test Co Ltd", account: `T-${run}-C`, phone: "0722345678", email: "co@example.com", pin: "P000000001A", location: "Mombasa", brandId: BRAND, ...over });
+const person = (over: Json = {}) => ({ type: "End User", firstName: "Test", lastName: "Person", account: `T-${run}-1`, phone: freshPhone(), email: freshEmail("person"), location: "Nairobi", brandId: BRAND, ...over });
+const company = (over: Json = {}) => ({ type: "Company", companyName: "Test Co Ltd", account: `T-${run}-C`, phone: freshPhone(), email: freshEmail("co"), pin: "P000000001A", location: "Mombasa", brandId: BRAND, ...over });
 
 describe("customers", () => {
   const P = "/api/crm/customers";
   it("creates, reads, lists, updates, persists and deletes a person (End User)", async () => {
-    const c = await api("POST", P, person());
+    const ph = freshPhone();
+    const c = await api("POST", P, person({ phone: ph }));
     assert.equal(c.status, 201);
     const row = c.data as Json; track(P, row.id);
     assert.equal(row.name, "Test Person");
     assert.equal(row.firstName, "Test");
-    assert.equal(row.phone, "+254712345678", "phone is stored as E.164");
+    assert.equal(row.phone, e164(ph), "phone is stored as E.164");
     assert.equal(row.pin, undefined);
     assert.equal((await api("GET", `${P}/${row.id}`)).status, 200);
     assert.ok(((await api("GET", P)).data as Json[]).some((x) => x.id === row.id), "appears in the list (persisted)");
@@ -78,9 +80,10 @@ describe("customers", () => {
     assert.equal(same.status, 200, "keeping its own account is fine");
   });
   it("normalises like the form: account whitespace removed, name whitespace collapsed", async () => {
-    const r = await api("POST", P, person({ account: ` T-${run}-n orm `, firstName: "  Mary   Ann ", phone: "+254 712 345 679" }));
+    const ph = freshPhone();
+    const r = await api("POST", P, person({ account: ` T-${run}-n orm `, firstName: "  Mary   Ann ", phone: `+254 ${ph.slice(1, 4)} ${ph.slice(4, 7)} ${ph.slice(7)}` }));
     assert.equal(r.status, 201); track(P, (r.data as Json).id);
-    assert.equal((r.data as Json).account, `T-${run}-norm`); assert.equal((r.data as Json).firstName, "Mary Ann"); assert.equal((r.data as Json).phone, "+254712345679");
+    assert.equal((r.data as Json).account, `T-${run}-norm`); assert.equal((r.data as Json).firstName, "Mary Ann"); assert.equal((r.data as Json).phone, e164(ph));
   });
   it("validates with the same rules as the form", async () => {
     const bad = await api("POST", P, person({ firstName: "R2D2", phone: "123", email: "nope", account: "bad account!", location: "" }));
@@ -92,6 +95,57 @@ describe("customers", () => {
     assert.equal((await api("POST", P, person({ type: "Nope" }))).status, 422);
     assert.equal((await api("POST", P, person({ firstName: 5 }))).status, 422);
     assert.equal((await api("POST", P, { type: "End User" })).status, 422, "missing fields");
+  });
+  it("needs a phone number or an email, not both: either keeps the customer's privacy", async () => {
+    const phoneOnly = await api("POST", P, person({ account: `T-${run}-po`, email: "" }));
+    assert.equal(phoneOnly.status, 201, phoneOnly.text); track(P, (phoneOnly.data as Json).id);
+    assert.equal((phoneOnly.data as Json).email, "");
+    const emailOnly = await api("POST", P, person({ account: `T-${run}-eo`, phone: "" }));
+    assert.equal(emailOnly.status, 201, emailOnly.text); track(P, (emailOnly.data as Json).id);
+    assert.equal((emailOnly.data as Json).phone, "");
+    const company1 = await api("POST", P, company({ account: `T-${run}-ce`, phone: "   " }));
+    assert.equal(company1.status, 201, "companies too; blank counts as not given"); track(P, (company1.data as Json).id);
+    const neither = await api("POST", P, person({ account: `T-${run}-ne`, phone: "", email: " " }));
+    assert.equal(neither.status, 422);
+    assert.match((neither.data as { errors: Json }).errors.phone, /phone number or an email/);
+    assert.match((neither.data as { errors: Json }).errors.email, /phone number or an email/);
+    const clear = await api("PUT", `${P}/${(phoneOnly.data as Json).id}`, person({ account: `T-${run}-po`, phone: "", email: "" }));
+    assert.equal(clear.status, 422, "an edit cannot remove both");
+    const bad = await api("POST", P, person({ account: `T-${run}-bp`, phone: "123", email: "" }));
+    assert.ok((bad.data as { errors: Json }).errors.phone.startsWith("Enter a valid phone"), "a phone that is given must still be valid");
+  });
+  it("one customer per phone number and per email in a company", async () => {
+    const ph = freshPhone();
+    const em = freshEmail("Dup");
+    const first = await api("POST", P, person({ account: `T-${run}-u1`, firstName: "First", phone: ph, email: em }));
+    assert.equal(first.status, 201, first.text); track(P, (first.data as Json).id);
+    // The same number written another way, and the same email in other capitals, are still the same.
+    const samePhone = await api("POST", P, person({ account: `T-${run}-u2`, phone: e164(ph).replace("+254", "+254 ") }));
+    assert.equal(samePhone.status, 409);
+    assert.equal((samePhone.data as { errors: Json }).errors.phone, `This phone number is already used by First Person (T-${run}-u1)`);
+    const sameEmail = await api("POST", P, person({ account: `T-${run}-u3`, phone: "", email: em.toUpperCase() }));
+    assert.equal(sameEmail.status, 409);
+    assert.equal((sameEmail.data as { errors: Json }).errors.email, `This email is already used by First Person (T-${run}-u1)`);
+    const all = await api("POST", P, person({ account: `T-${run}-U1`, phone: ph, email: em }));
+    assert.equal(all.status, 409, "account, phone and email all taken");
+    const e = (all.data as { errors: Json }).errors;
+    assert.ok(e.account && e.phone && e.email, JSON.stringify(e));
+    // Editing: keeping its own phone and email is fine; taking another customer's is not.
+    assert.equal((await api("PUT", `${P}/${(first.data as Json).id}`, person({ account: `T-${run}-u1`, firstName: "First", phone: ph, email: em, location: "Kisumu" }))).status, 200);
+    const second = await api("POST", P, person({ account: `T-${run}-u4` })); track(P, (second.data as Json).id);
+    const steal = await api("PUT", `${P}/${(second.data as Json).id}`, person({ account: `T-${run}-u4`, phone: ph }));
+    assert.equal(steal.status, 409);
+    assert.ok((steal.data as { errors: Json }).errors.phone);
+    // Empty values are "not given", so many customers may leave the same field empty.
+    for (const k of ["a", "b"]) {
+      const r = await api("POST", P, person({ account: `T-${run}-ne${k}`, phone: "" }));
+      assert.equal(r.status, 201, r.text); track(P, (r.data as Json).id);
+    }
+    // Once a customer is deleted its phone and email are free again.
+    const freed = freshPhone();
+    const x = await api("POST", P, person({ account: `T-${run}-fr1`, phone: freed })); assert.equal(x.status, 201);
+    assert.equal((await api("DELETE", `${P}/${(x.data as Json).id}`)).status, 204);
+    const y = await api("POST", P, person({ account: `T-${run}-fr2`, phone: freed })); assert.equal(y.status, 201); track(P, (y.data as Json).id);
   });
   it("does not allow changing the type of an existing customer", async () => {
     const a = await api("POST", P, person({ account: `T-${run}-t` })); track(P, (a.data as Json).id);
@@ -182,8 +236,9 @@ describe("tenant isolation", { skip: !B }, () => {
     assert.equal((await req(B!, "DELETE", `/api/crm/customers/${id}`)).status, 404);
     assert.equal(((await api("GET", `/api/crm/customers/${id}`)).data as Json).location, "Nairobi", "untouched");
     const brandB = ((await req(B!, "GET", "/api/settings/brands")).data as Json[])[0].id;
-    const same = await req(B!, "POST", "/api/crm/customers", person({ account: `T-${run}-iso`, brandId: brandB }));
-    assert.equal(same.status, 201, "the same account number may exist in another company");
+    const theirs = ((await api("GET", `/api/crm/customers/${id}`)).data as Json);
+    const same = await req(B!, "POST", "/api/crm/customers", person({ account: `T-${run}-iso`, brandId: brandB, phone: theirs.phone, email: theirs.email }));
+    assert.equal(same.status, 201, "the same account, phone and email may exist in another company");
     await req(B!, "DELETE", `/api/crm/customers/${(same.data as Json).id}`);
   });
 });

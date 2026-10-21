@@ -26,7 +26,7 @@ import { gpsPlatformAccounts } from "./schema";
 /** Each platform's API address comes from GPS_PLATFORMS. GPS_API_URL may override them all (tests use a fake API). */
 export type GpsCredentials = { platform: GpsPlatformId; baseUrl: string; account: string; passwordMd5: string };
 
-const platformName = (id: GpsPlatformId) => GPS_PLATFORMS.find((p) => p.id === id)?.name ?? "The GPS platform";
+export const platformName = (id: GpsPlatformId) => GPS_PLATFORMS.find((p) => p.id === id)?.name ?? "The GPS platform";
 
 export type GpsAuthErrorCode = "not-configured" | "network" | "timeout" | "rejected" | "bad-response";
 

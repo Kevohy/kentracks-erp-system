@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useRef, useState, useSyncExternalStore, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { CheckCircle2, History, Loader2, Plus, ShieldCheck, Trash2, TriangleAlert } from "lucide-react";
 import { Card } from "@/components/dashboard/Card";
 import { useInventory } from "@/components/inventory/InventoryProvider";
@@ -12,7 +12,7 @@ import { AddCustomerDialog } from "@/components/customers/AddCustomerDialog";
 import { crmApi } from "@/lib/crm-api";
 import type { Customer } from "@/lib/customers";
 import { erpApi, newClientKey } from "@/lib/erp-api";
-import { MOCK_IMEIS, gpsPlatformClient, isLocalhost, sanitizeImeiInput, verifyDevice, type GpsDevice, type GpsSource } from "@/lib/gps-platform";
+import { MOCK_IMEIS, sanitizeImeiInput, validateImei, type GpsDevice, type GpsSource } from "@/lib/gps-platform";
 import { MAX_NOTES, parseMoney } from "@/lib/purchase-validation";
 import { formatKes, formatSigned, paymentState } from "@/lib/sales-format";
 import { matchCustomer, saleTotalMinor, type PackageSale } from "@/lib/sales";
@@ -42,6 +42,9 @@ const blankDraft: PackageSaleDraft = {
 };
 
 /** The only deduction quantities allowed. */
+
+/** The GPS platform that verified the IMEI ("Kentracks", "iTrack"), for messages. */
+const platformOf = (v: { status: string; device?: GpsDevice }) => (v.status === "ok" && v.device?.platform) || "The GPS platform";
 
 const deviceStatusStyle = { Online: "bg-[#E6F4EA] text-[#1B5E20]", Offline: "bg-[#EEF1F4] text-[#4A5560]", Expired: "bg-[#FDECEA] text-[#B71C1C]" } as const;
 
@@ -74,8 +77,15 @@ export function PackageSaleForm({ kind = "Package Sale" }: { kind?: "Package Sal
   const [errors, setErrors] = useState<SaleErrors>({});
   const [saved, setSaved] = useState<PackageSale | null>(null);
 
-  // Mock verification is for local development only; false while rendering on the server.
-  const local = useSyncExternalStore(() => () => {}, isLocalhost, () => false);
+  // How the server verifies IMEIs for this company: its GPS platforms (Settings → GPS Platforms), the dev mock, or not at all.
+  const [gpsMode, setGpsMode] = useState<"live" | "mock" | "none" | null>(null);
+  useEffect(() => {
+    let live = true;
+    void erpApi.gps.mode().then((r) => live && r.ok && setGpsMode(r.data.mode));
+    return () => {
+      live = false;
+    };
+  }, []);
 
   const requestId = useRef(0);
   const submitted = useRef(false);
@@ -114,8 +124,15 @@ export function PackageSaleForm({ kind = "Package Sale" }: { kind?: "Package Sal
     if (verify.status === "loading") return;
     const id = ++requestId.current;
     setVerify({ status: "loading" });
-    const out = await verifyDevice(gpsPlatformClient, imei);
+    // The number is checked here first; the GPS platform is asked on the server, which holds the account secrets.
+    const v = validateImei(imei);
+    const res = v.error ? null : await erpApi.gps.verify(v.value);
     if (id !== requestId.current) return;
+    const out = v.error
+      ? ({ ok: false, code: "invalid-imei", message: v.error } as const)
+      : res!.ok
+        ? res!.data
+        : ({ ok: false, code: "api-error", message: res!.message } as const);
     if (!out.ok) {
       if (out.code === "invalid-imei") {
         setVerify({ status: "idle" });
@@ -128,7 +145,7 @@ export function PackageSaleForm({ kind = "Package Sale" }: { kind?: "Package Sal
     }
     setVerify({ status: "ok", device: out.device, missing: out.missing, source: out.source });
     // A Hosting Sale never links the customer automatically: it is always picked by hand.
-    const m = hosting ? null : matchCustomer(out.device.contact, customers);
+    const m = hosting ? null : matchCustomer(out.device.contact, customers, out.device.account);
     if (!m) {
       // leave any customer the user already chose
     } else if (m.status === "matched") {
@@ -138,7 +155,7 @@ export function PackageSaleForm({ kind = "Package Sale" }: { kind?: "Package Sal
       setDraft((d) => ({ ...d, customerId: "", customerLink: "manual" }));
       setMatch({ kind: m.status });
       // The device's contact is not in the CRM: ask whether to add them or pick an existing customer.
-      if (m.status === "none" && out.device.contact) setPromptOpen(true);
+      if (m.status === "none" && (out.device.contact || out.device.account)) setPromptOpen(true);
     }
     clear("imei", "customer");
   }
@@ -161,7 +178,10 @@ export function PackageSaleForm({ kind = "Package Sale" }: { kind?: "Package Sal
   const deviceContact = verify.status === "ok" ? verify.device.contact : undefined;
   const addInitial = (() => {
     const [first = "", ...rest] = (deviceContact?.name ?? "").trim().split(/\s+/);
-    return { type: "End User" as const, values: { firstName: first, lastName: rest.join(" "), phone: deviceContact?.phone ?? "", email: deviceContact?.email ?? "" } };
+    const account = verify.status === "ok" ? (verify.device.account ?? "").replace(/\s+/g, "") : "";
+    // The owner's role on the GPS platform picks the customer type (a virtual account is treated as an end user).
+    const type = verify.status === "ok" && verify.device.accountType === "Distributor" ? ("Distributor" as const) : ("End User" as const);
+    return { type, values: { firstName: first, lastName: rest.join(" "), account, phone: deviceContact?.phone ?? "", email: deviceContact?.email ?? "" } };
   })();
 
   // -------------------------------------------------------------- draft edits
@@ -321,7 +341,7 @@ export function PackageSaleForm({ kind = "Package Sale" }: { kind?: "Package Sal
               <Detail label="Profit" value={formatSigned(saved.profitMinor)} />
             </>
           )}
-          <Detail label="IMEI verification" value={saved.verificationSource === "mock" ? "Mock data (not confirmed by GPSPlatform)" : "GPSPlatform"} />
+          <Detail label="IMEI verification" value={saved.verificationSource === "mock" ? "Mock data (not confirmed by a GPS platform)" : (saved.verificationPlatform ?? "Kentracks")} />
         </dl>
         <div className="flex flex-wrap gap-3">
           <Link href="/sales" className="inline-flex min-h-11 items-center rounded-xl bg-brand px-5 text-[15px] font-semibold text-white hover:brightness-95">
@@ -359,7 +379,7 @@ export function PackageSaleForm({ kind = "Package Sale" }: { kind?: "Package Sal
                   aria-invalid={errors.saleDate ? true : undefined} aria-describedby={errors.saleDate ? "sale-date-err" : "sale-date-hint"}
                   className={cn(controlClass, errors.saleDate ? "border-[#C62828]" : "border-line")} />
               </Field>
-              <p id="sale-date-hint" className="text-[13px] text-muted sm:pb-3">GPSPlatform has no activation date for this IMEI, so enter the date it was sold.</p>
+              <p id="sale-date-hint" className="text-[13px] text-muted sm:pb-3">{platformOf(verify)} has no activation date for this IMEI, so enter the date it was sold.</p>
             </div>
           ) : (
             <p className="text-[13.5px] text-muted">The original sale date is taken from the IMEI activation date once you verify the IMEI.</p>
@@ -367,9 +387,9 @@ export function PackageSaleForm({ kind = "Package Sale" }: { kind?: "Package Sal
         )}
       </Card>
       <FormSection n={1} title="Verify IMEI">
-        {gpsPlatformClient.source === "mock" && local && (
+        {gpsMode === "mock" && (
           <div className="rounded-xl border border-[#F0C98C] bg-[#FFF8EC] px-4 py-3 text-[14px] text-[#6b3a00]">
-            <p className="font-semibold">GPSPlatform is not connected yet.</p>
+            <p className="font-semibold">Test mode: no GPS platform account is added yet.</p>
             <p>Verification uses fake (mock) devices and does not confirm a real tracker. Any valid 15-digit IMEI returns a made-up device.</p>
             <details className="mt-1.5">
               <summary className="cursor-pointer font-medium">Special test IMEIs (customer matching and error cases)</summary>
@@ -384,10 +404,12 @@ export function PackageSaleForm({ kind = "Package Sale" }: { kind?: "Package Sal
           </div>
         )}
 
-        {gpsPlatformClient.source === "mock" && !local && (
+        {gpsMode === "none" && (
           <div className="rounded-xl border border-[#F0C98C] bg-[#FFF8EC] px-4 py-3 text-[14px] text-[#6b3a00]">
-            <p className="font-semibold">GPSPlatform is not connected yet.</p>
-            <p>IMEI verification is not available here, so a {kind} cannot be completed until the integration is set up.</p>
+            <p className="font-semibold">No GPS platform is connected.</p>
+            <p>
+              Add your Kentracks or iTrack API account in <Link href="/settings/gps-platforms" className="font-semibold underline">Settings → GPS Platforms</Link> to verify IMEIs. A {kind} cannot be completed until then.
+            </p>
           </div>
         )}
 
@@ -413,13 +435,18 @@ export function PackageSaleForm({ kind = "Package Sale" }: { kind?: "Package Sal
 
         {verify.status === "ok" && d && (
           <div className="flex flex-col gap-3">
+            {d.accountBlocked && (
+              <p role="status" className="rounded-xl border border-[#F2B8B5] bg-[#FDECEA] px-4 py-3 text-[14px] text-[#9e241a]">
+                The customer account {d.account ? <span className="font-semibold">{d.account}</span> : "of this device"} is blocked on {platformOf(verify)}.
+              </p>
+            )}
             {verify.missing.length > 0 && (
               <p className="rounded-xl border border-[#F0C98C] bg-[#FFF8EC] px-4 py-3 text-[14px] text-[#6b3a00]">
                 The response was incomplete. Not provided: {verify.missing.join(", ")}.
               </p>
             )}
             <dl className="grid gap-x-6 gap-y-3 rounded-xl bg-canvas p-4 sm:grid-cols-2 lg:grid-cols-3">
-              <Detail label="Verification status" value={verify.source === "mock" ? "Verified against mock data (not GPSPlatform)" : "Verified by GPSPlatform"} />
+              <Detail label="Verification status" value={verify.source === "mock" ? "Verified against mock data (not a GPS platform)" : `Verified by ${platformOf(verify)}`} />
               <div className="min-w-0">
                 <dt className="text-[12.5px] text-muted">Status</dt>
                 <dd className="mt-0.5">
@@ -435,10 +462,12 @@ export function PackageSaleForm({ kind = "Package Sale" }: { kind?: "Package Sal
               <Detail label="Vehicle Plate Number" value={d.vehiclePlate} />
               <Detail label="Model" value={d.model} />
               <Detail label="SIM Card" value={d.simCard} />
-              <Detail label="Last Update" value={d.lastSeen} />
+              {(d.lastSeen || verify.source === "mock") && <Detail label="Last Update" value={d.lastSeen} />}
               <Detail label="Activated Date" value={d.activationDate} />
               <Detail label="Platform Expiration Date" value={d.expirationDate} />
-              {d.account && <Detail label="GPS account" value={d.account} />}
+              {d.userExpirationDate && <Detail label="User Expiration Date" value={d.userExpirationDate} />}
+              {d.account && <Detail label="Customer account" value={d.account} />}
+              {d.accountType && <Detail label="Account type" value={d.accountType} />}
               {d.contact?.name && <Detail label="Contact name" value={d.contact.name} />}
               {!hosting && d.contact?.phone && <Detail label="Contact phone" value={d.contact.phone} />}
               {!hosting && d.contact?.email && <Detail label="Contact email" value={d.contact.email} />}
@@ -465,15 +494,15 @@ export function PackageSaleForm({ kind = "Package Sale" }: { kind?: "Package Sal
             {match?.kind === "matched" && (
               <p className="text-[14px] text-muted">
                 {draft.customerLink === "automatic"
-                  ? `Linked automatically: ${match.name} matched the GPSPlatform contact by ${match.by}.`
-                  : `GPSPlatform contact matched ${match.name} by ${match.by}, but you selected a different customer.`}
+                  ? `Linked automatically: ${match.name} matches the device by ${match.by}.`
+                  : `The device matches ${match.name} by ${match.by}, but you selected a different customer.`}
               </p>
             )}
-            {match?.kind === "ambiguous" && <p className="text-[14px] text-muted">The GPSPlatform contact details match more than one CRM customer, so none was linked. Select the right one.</p>}
-            {match?.kind === "created" && <p className="text-[14px] text-muted">{match.name} was added to the CRM from the GPSPlatform contact and selected for this sale.</p>}
+            {match?.kind === "ambiguous" && <p className="text-[14px] text-muted">The device contact details match more than one CRM customer, so none was linked. Select the right one.</p>}
+            {match?.kind === "created" && <p className="text-[14px] text-muted">{match.name} was added to the CRM from the device details and selected for this sale.</p>}
             {match?.kind === "none" && !draft.customerId && (
               <div className="flex flex-col gap-3 rounded-xl border border-line p-4 sm:flex-row sm:items-center sm:justify-between">
-                <p className="text-[14px] text-muted">No CRM customer matches the GPSPlatform contact details.</p>
+                <p className="text-[14px] text-muted">No CRM customer matches the device&apos;s customer account or contact details.</p>
                 <div className="flex flex-wrap gap-2">
                   <button type="button" onClick={addNewCustomer} className="inline-flex min-h-11 items-center gap-1.5 rounded-xl bg-brand px-4 text-[14.5px] font-semibold text-white hover:brightness-95">
                     <Plus size={16} aria-hidden="true" />
@@ -546,7 +575,7 @@ export function PackageSaleForm({ kind = "Package Sale" }: { kind?: "Package Sal
               {draft.cardType === NEW_CARD && (
                 <>
                   <ReadOnlyField id="sale-platform-expiry" label="Platform expiration date"
-                    value={verify.status === "ok" ? verify.device.expirationDate : undefined} empty="Not provided by GPSPlatform" />
+                    value={verify.status === "ok" ? verify.device.expirationDate : undefined} empty={`Not provided by ${platformOf(verify)}`} />
                   <TextField id="sale-renewal-fee" name="renewalFee" label="Renewal fee (KES)" value={draft.renewalFee ?? ""} error={errors.renewalFee}
                     placeholder="0.00" inputMode="decimal" hint="Charged when the licence expires; not added to this sale."
                     onChange={(v) => set("renewalFee", sanitizeNumberInput(v), "renewalFee")}
@@ -717,7 +746,7 @@ export function PackageSaleForm({ kind = "Package Sale" }: { kind?: "Package Sal
 
       {!hosting && (
         <>
-          <DeviceCustomerPrompt open={promptOpen} contact={deviceContact} onAddNew={addNewCustomer} onChooseExisting={chooseExisting} onClose={() => setPromptOpen(false)} />
+          <DeviceCustomerPrompt open={promptOpen} contact={deviceContact} account={verify.status === "ok" ? verify.device.account : undefined} accountType={verify.status === "ok" ? verify.device.accountType : undefined} onAddNew={addNewCustomer} onChooseExisting={chooseExisting} onClose={() => setPromptOpen(false)} />
           <AddCustomerDialog
             open={addOpen}
             onClose={() => setAddOpen(false)}

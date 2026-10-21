@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Eye, Loader2, Search } from "lucide-react";
+import { Eye, HandCoins, Loader2, Search } from "lucide-react";
 import { ListStatusRow, type ListState } from "@/components/crm/useCrmList";
 import { PageHeader } from "@/components/shell/PageHeader";
 import { Card } from "@/components/dashboard/Card";
@@ -62,7 +62,21 @@ function useSaleHistory(q: string, type: string) {
     void fetchPage(null);
   }, [fetchPage]);
 
-  return { items, totals, hasMore: cursor !== null, state, loadMore: () => cursor && state.status === "ready" && fetchPage(cursor), reload: () => fetchPage(null) };
+  /** A sale changed (a payment was recorded): show its new amounts and move the outstanding total by the same. */
+  const itemsNow = useRef(items);
+  useEffect(() => {
+    itemsNow.current = items;
+  }, [items]);
+  const replace = useCallback((sale: Sale) => {
+    const old = itemsNow.current.find((s) => s.id === sale.id);
+    if (!old) return;
+    const delta = sale.paidMinor - old.paidMinor;
+    itemsNow.current = itemsNow.current.map((s) => (s.id === sale.id ? sale : s));
+    setItems((prev) => prev.map((s) => (s.id === sale.id ? sale : s)));
+    if (delta) setTotals((t) => (t ? { ...t, balanceMinor: t.balanceMinor - delta } : t));
+  }, []);
+
+  return { items, totals, hasMore: cursor !== null, state, loadMore: () => cursor && state.status === "ready" && fetchPage(cursor), reload: () => fetchPage(null), replace };
 }
 
 export function SalesView() {
@@ -70,6 +84,12 @@ export function SalesView() {
   const [q, setQ] = useState("");
   const [type, setType] = useState<(typeof filters)[number]>("All");
   const [viewId, setViewId] = useState<string | null>(null);
+  const [payFirst, setPayFirst] = useState(false);
+  const open = (id: string, pay = false) => {
+    setPayFirst(pay);
+    setViewId(id);
+  };
+  const owes = (s: Sale) => !oldSaleOf(s) && s.paidMinor < s.totalMinor;
 
   // Search once typing pauses.
   useEffect(() => {
@@ -77,7 +97,7 @@ export function SalesView() {
     return () => clearTimeout(t);
   }, [query]);
 
-  const { items: shown, totals: serverTotals, hasMore, state, loadMore, reload } = useSaleHistory(q, type === "All" ? "" : type);
+  const { items: shown, totals: serverTotals, hasMore, state, loadMore, reload, replace } = useSaleHistory(q, type === "All" ? "" : type);
   const totals = { revenue: serverTotals?.revenueMinor ?? 0, balance: serverTotals?.balanceMinor ?? 0, profit: serverTotals?.profitMinor ?? 0 };
   const listState: ListState<unknown> =
     state.status === "error" ? state : state.status === "loading" ? { status: "loading" } : { status: "ready", items: shown };
@@ -203,8 +223,15 @@ export function SalesView() {
                         ? <span className="inline-block whitespace-nowrap rounded-full bg-tint px-2.5 py-0.5 text-[13px] font-semibold text-navy">Old sale</span>
                         : <span className={cn("inline-block whitespace-nowrap rounded-full px-2.5 py-0.5 text-[13px] font-semibold", statusStyle[st])}>{st}</span>}
                     </td>
-                    <td className="px-4 py-2 pr-6 text-right">
-                      <button type="button" onClick={() => setViewId(s.id)} aria-label={`View sale to ${s.customerName}`}
+                    <td className="whitespace-nowrap px-4 py-2 pr-6 text-right">
+                      {owes(s) && (
+                        <button type="button" onClick={() => open(s.id, true)} aria-label={`Record payment for ${s.customerName}`}
+                          className="inline-flex min-h-11 items-center gap-1.5 rounded-xl px-3 text-[14px] font-semibold text-brand hover:bg-[#FFF1EA]">
+                          <HandCoins size={16} aria-hidden="true" />
+                          Record payment
+                        </button>
+                      )}
+                      <button type="button" onClick={() => open(s.id)} aria-label={`View sale to ${s.customerName}`}
                         className="inline-flex min-h-11 items-center gap-1.5 rounded-xl px-3 text-[14px] font-semibold text-navy hover:bg-tint">
                         <Eye size={16} aria-hidden="true" />
                         View
@@ -255,11 +282,20 @@ export function SalesView() {
                   <div className="min-w-0"><dt className="text-[12px] text-muted">Profit</dt><dd className={cn("truncate font-semibold tabular-nums", s.profitMinor < 0 ? "text-[#B71C1C]" : "text-[#1B5E20]")}>{formatSigned(s.profitMinor)}</dd></div>
                 </dl>
                 )}
-                <button type="button" onClick={() => setViewId(s.id)} aria-label={`View sale to ${s.customerName}`}
-                  className="inline-flex min-h-11 items-center justify-center gap-1.5 rounded-xl border border-line text-[14.5px] font-semibold text-navy hover:bg-tint">
-                  <Eye size={16} aria-hidden="true" />
-                  View details
-                </button>
+                <div className={cn("grid gap-2", owes(s) && "grid-cols-2")}>
+                  {owes(s) && (
+                    <button type="button" onClick={() => open(s.id, true)} aria-label={`Record payment for ${s.customerName}`}
+                      className="inline-flex min-h-11 items-center justify-center gap-1.5 rounded-xl bg-brand px-2 text-[14.5px] font-semibold text-white hover:brightness-95">
+                      <HandCoins size={16} aria-hidden="true" />
+                      Record payment
+                    </button>
+                  )}
+                  <button type="button" onClick={() => open(s.id)} aria-label={`View sale to ${s.customerName}`}
+                    className="inline-flex min-h-11 items-center justify-center gap-1.5 rounded-xl border border-line px-2 text-[14.5px] font-semibold text-navy hover:bg-tint">
+                    <Eye size={16} aria-hidden="true" />
+                    View details
+                  </button>
+                </div>
               </li>
             );
           })}
@@ -283,7 +319,7 @@ export function SalesView() {
         </div>
       </Card>
 
-      <SaleDetailsDialog sale={viewing} onClose={() => setViewId(null)} />
+      <SaleDetailsDialog sale={viewing} startWithPayment={payFirst} onUpdated={replace} onClose={() => setViewId(null)} />
     </>
   );
 }

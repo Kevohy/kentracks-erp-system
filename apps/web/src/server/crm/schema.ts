@@ -70,6 +70,9 @@ export const customers = pgTable(
   },
   (t) => [
     uniqueIndex("customers_tenant_account_uq").on(t.tenantId, sql`lower(${t.account})`),
+    // One customer per phone number and per email in a company; an empty value means "not given".
+    uniqueIndex("customers_tenant_phone_uq").on(t.tenantId, t.phone).where(sql`${t.phone} <> ''`),
+    uniqueIndex("customers_tenant_email_uq").on(t.tenantId, sql`lower(${t.email})`).where(sql`${t.email} <> ''`),
     index("customers_tenant_created_idx").on(t.tenantId, t.createdAt),
     index("customers_brand_idx").on(t.brandId),
     check(
@@ -78,8 +81,10 @@ export const customers = pgTable(
        OR (${t.type} <> 'Company' AND ${t.firstName} IS NOT NULL AND ${t.lastName} IS NOT NULL AND ${t.companyName} IS NULL AND ${t.pin} IS NULL)`,
     ),
     check("customers_account_format", sql`${t.account} ~ '^[A-Za-z0-9._/-]+$' AND char_length(${t.account}) <= 40`),
-    check("customers_phone_e164", sql`${t.phone} ~ ${E164}`),
-    check("customers_email_format", sql`${t.email} ~ ${EMAIL} AND char_length(${t.email}) <= 254`),
+    // Phone and email may each be empty (the customer keeps it private), but not both.
+    check("customers_phone_e164", sql`${t.phone} = '' OR ${t.phone} ~ ${E164}`),
+    check("customers_email_format", sql`${t.email} = '' OR (${t.email} ~ ${EMAIL} AND char_length(${t.email}) <= 254)`),
+    check("customers_phone_or_email", sql`${t.phone} <> '' OR ${t.email} <> ''`),
     check("customers_text_lengths", sql`char_length(${t.location}) BETWEEN 1 AND 120 AND char_length(${t.firstName}) <= 60 AND char_length(${t.lastName}) <= 60 AND char_length(${t.companyName}) <= 120 AND char_length(${t.pin}) <= 20`),
   ],
 );

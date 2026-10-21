@@ -229,7 +229,7 @@ function ByClient({ today, version, act, copy }: Shared) {
             const menu = (
               <ActionsMenu label={`Actions for ${c.name}`} items={[
                 { label: isOpen ? "Hide SIMs" : "Show SIMs", icon: isOpen ? ChevronUp : ChevronDown, onSelect: () => toggle(c.id) },
-                { label: "Copy phone number", icon: Copy, onSelect: () => copy("Phone number", c.phone) },
+                ...(c.phone ? [{ label: "Copy phone number", icon: Copy, onSelect: () => copy("Phone number", c.phone) }] : []),
               ]} />
             );
             return (
@@ -241,7 +241,7 @@ function ByClient({ today, version, act, copy }: Shared) {
                       <Avatar text={c.name} />
                       <span className="min-w-0 flex-1">
                         <span className="block truncate text-[16px] font-semibold">{c.name}</span>
-                        <span className="block truncate text-[13px] text-muted">{c.phone} · <span className="font-mono">{c.account}</span></span>
+                        <span className="block truncate text-[13px] text-muted">{c.phone ? `${c.phone} · ` : ""}<span className="font-mono">{c.account}</span></span>
                         <span className="block text-[13px] text-muted">Next expiry: {nx ? <span className={cn("font-medium", simExpiry(nx, today) === "expired" ? "text-[#B71C1C]" : "text-ink")}>{longDate(nx.expiryDate)}</span> : "—"}</span>
                       </span>
                       <ChevronDown size={20} className={cn("shrink-0 text-muted transition-transform lg:hidden", isOpen && "rotate-180")} aria-hidden="true" />

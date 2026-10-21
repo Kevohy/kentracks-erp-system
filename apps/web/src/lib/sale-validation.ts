@@ -153,7 +153,7 @@ export function oldSaleDateOf(device: GpsDevice | undefined): string | null {
 /** Old sales: the original sale date must be a real date, not in the future, and not before 2000. */
 export function parseSaleDate(raw: string, today: string): { value?: string; error?: string } {
   const s = stripControlChars(raw).trim();
-  if (!s) return { error: "GPSPlatform has no activation date for this IMEI. Enter the original sale date" };
+  if (!s) return { error: "Kentracks has no activation date for this IMEI. Enter the original sale date" };
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
   const d = m ? new Date(Date.UTC(+m[1], +m[2] - 1, +m[3])) : null;
   if (!m || !d || d.getUTCMonth() !== +m[2] - 1 || d.getUTCDate() !== +m[3]) return { error: "Enter a valid date" };
@@ -348,6 +348,7 @@ export function validatePackageSale(
       vehiclePlate: device.vehiclePlate ?? "",
       gpsAccount: device.account ?? "",
       verificationSource: source,
+      verificationPlatform: source === "gpsplatform" ? (device.platform ?? null) : null,
       packageId: pkg.id,
       packageName: pkg.name,
       packagePriceMinor: totalMinor,
