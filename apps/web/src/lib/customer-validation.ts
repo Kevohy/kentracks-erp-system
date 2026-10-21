@@ -51,5 +51,8 @@ export function validateField(field: FieldName, raw: string): FieldResult {
       return validateRequiredText(raw, "PIN", 20);
     case "location":
       return validateRequiredText(raw, "Location", 120);
+    case "brandId":
+      // Every customer has a brand; the server checks that it is one of this company's brands.
+      return raw.trim() ? { value: raw.trim() } : { value: "", error: "Select a brand" };
   }
 }

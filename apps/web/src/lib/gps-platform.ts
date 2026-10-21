@@ -289,21 +289,26 @@ export function isLocalhost(): boolean {
   return h === "localhost" || h === "127.0.0.1" || h === "[::1]" || h === "::1" || h.endsWith(".localhost");
 }
 
-export const mockGpsPlatformClient: GpsPlatformClient = {
-  source: "mock",
-  async verifyImei(imei) {
-    // The mock exists for local development only. Anywhere else it must not pretend to verify.
-    if (!isLocalhost()) {
-      throw new GpsPlatformError("api-error", "GPSPlatform is not connected, so IMEIs cannot be verified here yet.");
-    }
-    await wait(700);
-    if (imei === MOCK_IMEIS.apiFailure) {
-      throw new GpsPlatformError("api-error", "GPSPlatform is not responding right now. Try again in a few minutes.");
-    }
-    // For testing, any other valid IMEI gets a made-up device instead of "not found".
-    return MOCK_BODIES[imei] ?? fakeDeviceFor(imei);
-  },
-};
+/** The mock client, behind a gate. The browser gates on localhost; the server gates on its own dev switch. */
+export function createMockGpsClient(isAllowed: () => boolean, delayMs = 700): GpsPlatformClient {
+  return {
+    source: "mock",
+    async verifyImei(imei) {
+      // The mock exists for local development only. Anywhere else it must not pretend to verify.
+      if (!isAllowed()) {
+        throw new GpsPlatformError("api-error", "GPSPlatform is not connected, so IMEIs cannot be verified here yet.");
+      }
+      if (delayMs) await wait(delayMs);
+      if (imei === MOCK_IMEIS.apiFailure) {
+        throw new GpsPlatformError("api-error", "GPSPlatform is not responding right now. Try again in a few minutes.");
+      }
+      // For testing, any other valid IMEI gets a made-up device instead of "not found".
+      return MOCK_BODIES[imei] ?? fakeDeviceFor(imei);
+    },
+  };
+}
+
+export const mockGpsPlatformClient: GpsPlatformClient = createMockGpsClient(isLocalhost);
 
 /** The one place to switch from the mock to a real, server-backed client. */
 export const gpsPlatformClient: GpsPlatformClient = mockGpsPlatformClient;

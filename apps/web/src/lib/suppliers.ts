@@ -79,11 +79,3 @@ export function fromSupplierValues(id: string, type: SupplierType, v: Partial<Re
   };
 }
 
-/** Placeholder rows to demonstrate the list. Not real data. */
-export const sampleSuppliers: Supplier[] = [
-  { id: "s1", type: "Company", name: "Nairobi Telecom Supplies Ltd", contactPerson: "Peter Kamau", phone: "+254711000201", email: "peter.kamau@nts-supplies.example", location: "Industrial Area, Nairobi", kraPin: "P051234567A", department: "Sales" },
-  { id: "s2", type: "Individual", name: "Amina Yusuf", phone: "+254722000202", email: "amina.yusuf@example.com", location: "Eastleigh, Nairobi" },
-  { id: "s3", type: "Company", name: "Coastline Electronics", contactPerson: "Joseph O'Neil", phone: "+254733000203", email: "joseph@coastline-electronics.example", location: "Mombasa", department: "Procurement" },
-  { id: "s4", type: "Individual", name: "David Mutua-Kioko", phone: "+254712000204", email: "david.mutua@example.com", location: "Machakos" },
-  { id: "s5", type: "Company", name: "Highland SIM & Accessories", contactPerson: "Lucy Chebet", phone: "+254745000205", email: "lucy.chebet@highland-sim.example", location: "Eldoret", kraPin: "P009876543K", department: "Accounts" },
-];

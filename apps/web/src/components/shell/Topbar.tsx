@@ -1,10 +1,10 @@
 import type { Ref } from "react";
 import { Bell, Menu, Search } from "lucide-react";
-import { currentUser } from "@/lib/sample-data";
+import { AccountMenu } from "./AccountMenu";
 
 export function Topbar({ onMenu, menuButtonRef }: { onMenu: () => void; menuButtonRef?: Ref<HTMLButtonElement> }) {
   return (
-    <header className="flex h-17 items-center gap-3.5 border-b border-line bg-white px-4 sm:px-8">
+    <header className="sticky top-0 z-20 flex h-17 items-center gap-3.5 border-b border-line bg-white/95 px-4 backdrop-blur sm:px-8">
       <button
         type="button"
         ref={menuButtonRef}
@@ -41,15 +41,7 @@ export function Topbar({ onMenu, menuButtonRef }: { onMenu: () => void; menuButt
         <span className="absolute right-2.5 top-2.5 size-[9px] rounded-full border-2 border-white bg-brand box-content" />
       </button>
 
-      <button type="button" aria-label="Account" className="flex items-center gap-2.5 rounded-xl text-left">
-        <span className="grid size-10 shrink-0 place-items-center rounded-full bg-navy text-sm font-semibold tracking-[0.5px] text-white">
-          {currentUser.initials}
-        </span>
-        <span className="hidden lg:block">
-          <span className="block text-[14.5px] font-semibold leading-tight">{currentUser.name}</span>
-          <span className="block text-[12.5px] text-muted">{currentUser.role}</span>
-        </span>
-      </button>
+      <AccountMenu />
     </header>
   );
 }

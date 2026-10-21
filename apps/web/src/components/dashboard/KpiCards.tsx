@@ -12,20 +12,20 @@ const icons: Record<Kpi["icon"], typeof TrendingUp> = {
 
 export function KpiCards() {
   return (
-    <section aria-label="Key figures" className="grid grid-cols-1 gap-[18px] sm:grid-cols-2 xl:grid-cols-4">
+    <section aria-label="Key figures" className="grid grid-cols-2 gap-3 sm:gap-[18px] xl:grid-cols-4">
       {kpis.map((k) => {
         const Icon = icons[k.icon];
         const Arrow = k.trend === "up" ? ArrowUpRight : ArrowDownRight;
         return (
-          <Card key={k.label} className="flex flex-col gap-3.5 p-[18px] sm:px-[22px] sm:py-5">
-            <div className="flex min-h-11 items-center justify-between gap-3">
-              <div className="text-[14.5px] font-medium text-muted">{k.label}</div>
-              <div className="grid size-10 shrink-0 place-items-center rounded-xl bg-tint text-navy">
+          <Card key={k.label} className="flex min-w-0 flex-col gap-2.5 p-3.5 sm:gap-3.5 sm:p-[18px] sm:px-[22px] sm:py-5">
+            <div className="flex items-start justify-between gap-2 sm:min-h-11 sm:items-center sm:gap-3">
+              <div className="text-[13.5px] font-medium leading-tight text-muted sm:text-[14.5px]">{k.label}</div>
+              <div className="hidden size-10 shrink-0 sm:grid place-items-center rounded-xl bg-tint text-navy">
                 <Icon size={20} strokeWidth={1.8} aria-hidden="true" />
               </div>
             </div>
-            <div className="text-[32px] font-semibold leading-[1.1] tracking-[-0.5px] tabular-nums">
-              {k.unit && <small className="mr-1.5 text-[15px] font-medium tracking-normal text-muted">{k.unit}</small>}
+            <div className="break-words text-[22px] font-semibold sm:text-[32px] leading-[1.1] tracking-[-0.5px] tabular-nums">
+              {k.unit && <small className="mr-1 text-[12px] sm:mr-1.5 sm:text-[15px] font-medium tracking-normal text-muted">{k.unit}</small>}
               {k.value}
             </div>
             <div
@@ -36,7 +36,7 @@ export function KpiCards() {
             >
               <Arrow size={14} strokeWidth={2.4} aria-hidden="true" />
               {k.delta}
-              <span className="ml-1 font-normal text-muted">{k.note}</span>
+              <span className="ml-1 font-normal text-muted max-sm:sr-only">{k.note}</span>
             </div>
           </Card>
         );

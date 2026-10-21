@@ -1,14 +1,6 @@
-import {
-  sampleCategories,
-  sampleProducts,
-  samplePlatforms,
-  sampleSimCards,
-  type Product,
-  type ProductCategory,
-} from "./inventory";
-import { sampleSuppliers } from "./suppliers";
+import type { PlatformCardType, SimCardType } from "./inventory";
 
-/** Mock data and helpers for Purchases. Frontend only; nothing is persisted. */
+/** Types and helpers for Purchases. Records are saved by the server (src/server/erp/purchases.ts). */
 
 export const purchaseItemTypes = ["Product", "SIM Card", "Platform"] as const;
 export type PurchaseItemType = (typeof purchaseItemTypes)[number];
@@ -26,6 +18,10 @@ export type PurchaseItem = {
   label: string;
   /** Products only. */
   categoryName?: string;
+  /** SIM cards only: Local IoT, International IoT, Prepaid or Postpaid. */
+  simType?: SimCardType;
+  /** Platforms only: New Card, Annual Card or Lifelong Card. */
+  cardType?: PlatformCardType;
   quantity: number;
   /** Money is held in minor units (cents) so totals never suffer float errors. */
   unitPriceMinor: number;
@@ -59,77 +55,27 @@ export function formatMinor(minor: number): string {
 }
 export const formatKes = (minor: number) => `KES ${formatMinor(minor)}`;
 
-// ---- Stock is derived from the purchase ledger, so Purchases and Inventory can never disagree.
+// ---- Stock is derived on the server (src/server/erp/inventory.ts): received purchase quantities minus
+// what sales took out. The latest buying price is the price on the latest-dated RECEIVED purchase; on the
+// same date the purchase added last wins. Nothing here edits it.
 
 export type StockEntry = { quantity: number; latestPriceMinor: number | null };
-const stockKey = (type: PurchaseItemType, id: string) => `${type}:${id}`;
 
-export function buildStock(purchases: Purchase[]): (type: PurchaseItemType, id: string) => StockEntry {
-  const map = new Map<string, StockEntry & { latestDate: string }>();
-  // Purchases are ordered newest-added first, so on equal dates the first one seen wins.
-  // Only received purchases are in stock; a pending one has not arrived yet.
-  for (const p of purchases) {
-    if (p.status !== "Received") continue;
-    for (const i of p.items) {
-      const k = stockKey(i.itemType, i.itemId);
-      const cur = map.get(k) ?? { quantity: 0, latestPriceMinor: null, latestDate: "" };
-      cur.quantity += i.quantity;
-      if (p.date > cur.latestDate) {
-        cur.latestDate = p.date;
-        cur.latestPriceMinor = i.unitPriceMinor;
-      }
-      map.set(k, cur);
-    }
-  }
-  return (type, id) => map.get(stockKey(type, id)) ?? { quantity: 0, latestPriceMinor: null };
-}
+/**
+ * One stock figure from the server. Platform licences are counted per card type: one row per card type
+ * (cardType "New Card" etc., or NO_CARD_TYPE for licences bought before card types were recorded) plus a
+ * total row for the platform (cardType undefined). Products and SIM cards only have the total row.
+ */
+export type StockRow = { type: PurchaseItemType; id: string; cardType?: string; quantity: number; latestPriceMinor: number | null };
+export const NO_CARD_TYPE = "No card type";
 
-// ---- Sample purchases, built only from the existing sample suppliers and inventory.
-
-const cat = (c: ProductCategory[], id: string) => c.find((x) => x.id === id)?.name;
-const prod = (id: string): Product => sampleProducts.find((p) => p.id === id)!;
-const supplier = (id: string) => sampleSuppliers.find((s) => s.id === id)!;
-
-function productItem(id: string, productId: string, quantity: number, unitPriceMinor: number): PurchaseItem {
-  const p = prod(productId);
-  return { id, itemType: "Product", itemId: p.id, label: p.model, categoryName: cat(sampleCategories, p.categoryId), quantity, unitPriceMinor };
-}
-function simItem(id: string, simId: string, quantity: number, unitPriceMinor: number): PurchaseItem {
-  const s = sampleSimCards.find((x) => x.id === simId)!;
-  return { id, itemType: "SIM Card", itemId: s.id, label: s.name, quantity, unitPriceMinor };
-}
-function platformItem(id: string, platformId: string, quantity: number, unitPriceMinor: number): PurchaseItem {
-  const p = samplePlatforms.find((x) => x.id === platformId)!;
-  return { id, itemType: "Platform", itemId: p.id, label: p.name, quantity, unitPriceMinor };
-}
-function purchase(id: string, supplierId: string, date: string, status: PurchaseStatus, paidMinor: number, items: PurchaseItem[], notes = ""): Purchase {
-  return {
-    id,
-    supplierId,
-    supplierName: supplier(supplierId).name,
-    date,
-    status,
-    notes,
-    items,
-    totalMinor: items.reduce((sum, i) => sum + itemAmountMinor(i), 0),
-    paidMinor,
+/** Look up stock: the total for an item, or (platforms) the stock of one card type. */
+export type StockLookup = (type: PurchaseItemType, id: string, cardType?: string) => StockEntry;
+export function makeStockLookup(rows: StockRow[]): StockLookup {
+  const key = (type: string, id: string, cardType?: string) => `${type}:${id}:${cardType ?? "*"}`;
+  const m = new Map(rows.map((r) => [key(r.type, r.id, r.cardType), r]));
+  return (type, id, cardType) => {
+    const r = m.get(key(type, id, type === "Platform" ? cardType : undefined));
+    return r ? { quantity: r.quantity, latestPriceMinor: r.latestPriceMinor } : { quantity: 0, latestPriceMinor: null };
   };
 }
-
-export const samplePurchases: Purchase[] = [
-  purchase("pu3", "s3", "2026-10-10", "Pending", 0, [
-    productItem("pu3-1", "p3", 8, 980000),
-    productItem("pu3-2", "p4", 5, 750000),
-    platformItem("pu3-3", "pl1", 100, 12000),
-  ]),
-  purchase(
-    "pu2",
-    "s5",
-    "2026-10-03",
-    "Received",
-    1500000,
-    [simItem("pu2-1", "s1", 50, 45000), simItem("pu2-2", "s3", 30, 15000)],
-    "Balance due at month end.",
-  ),
-  purchase("pu1", "s1", "2026-09-12", "Received", 16200000, [productItem("pu1-1", "p1", 20, 650000), productItem("pu1-2", "p2", 10, 320000)]),
-];

@@ -73,8 +73,9 @@ export const navigation: NavItem[] = [
     label: "Billing",
     icon: Receipt,
     children: [
+      { label: "Customer Vehicles", href: "/billing/vehicles", built: true },
       { label: "Renewal Center", href: "/billing/renewal-center" },
-      { label: "IoT SIM", href: "/billing/iot-sim" },
+      { label: "IoT SIM", href: "/billing/iot-sim", built: true },
     ],
   },
   {
@@ -102,7 +103,11 @@ export const navigation: NavItem[] = [
     id: "settings",
     label: "Settings",
     icon: Settings,
-    children: [{ label: "Packages", href: "/settings/packages", built: true }],
+    children: [
+      { label: "Packages", href: "/settings/packages", built: true },
+      { label: "Brands", href: "/settings/brands", built: true },
+      { label: "GPS Platforms", href: "/settings/gps-platforms", built: true },
+    ],
   },
 ];
 

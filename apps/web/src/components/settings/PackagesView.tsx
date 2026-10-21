@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState, type FormEvent } from "react";
+import { ListStatusRow, type ListState } from "@/components/crm/useCrmList";
 import { Pencil } from "lucide-react";
 import { Card } from "@/components/dashboard/Card";
 import { PageHeader } from "@/components/shell/PageHeader";
@@ -11,7 +12,11 @@ import { stripControlChars } from "@/lib/validation";
 
 /** Settings → Packages: the package names offered when making a Package Sale. */
 export function PackagesView() {
-  const { packages, addPackage, updatePackage } = useSales();
+  const { load, reload, packages, addPackage, updatePackage } = useSales();
+  const listState: ListState<unknown> = load.status === "ready" ? { status: "ready", items: packages } : load;
+  const [busy, setBusy] = useState(false);
+  const [formError, setFormError] = useState("");
+  const saving = useRef(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [name, setName] = useState("");
@@ -21,6 +26,7 @@ export function PackagesView() {
     setEditingId(null);
     setName("");
     setError(undefined);
+    setFormError("");
   };
 
   function edit(id: string) {
@@ -32,17 +38,30 @@ export function PackagesView() {
     rootRef.current?.querySelector<HTMLElement>("#pkg-name")?.focus();
   }
 
-  function submit(e: FormEvent) {
+  async function submit(e: FormEvent) {
     e.preventDefault();
+    if (saving.current) return; // a second click or Enter while saving must not add another package
     const r = validatePackage({ name }, packages, editingId ?? undefined);
     setError(r.errors.name);
     if (r.errors.name) {
       rootRef.current?.querySelector<HTMLElement>("#pkg-name")?.focus();
       return;
     }
-    if (editingId) updatePackage(editingId, r.name);
-    else addPackage(r.name);
-    reset();
+    saving.current = true;
+    setBusy(true);
+    setFormError("");
+    const result = editingId ? await updatePackage(editingId, r.name) : await addPackage(r.name);
+    saving.current = false;
+    setBusy(false);
+    if (result.ok) {
+      reset();
+      return;
+    }
+    // The server also refuses a duplicate name (for example one added from another device a moment ago).
+    if (result.fieldErrors.name) {
+      setError(result.fieldErrors.name);
+      rootRef.current?.querySelector<HTMLElement>("#pkg-name")?.focus();
+    } else setFormError(result.message);
   }
 
   return (
@@ -50,8 +69,8 @@ export function PackagesView() {
       <PageHeader title="Packages" subtitle="Package names offered in Package Sales. The price is entered on each sale." />
       <div ref={rootRef} className="grid gap-5 lg:grid-cols-[1fr_380px] lg:items-start">
         <Card className="overflow-hidden">
-          <table className="w-full border-collapse text-left text-[14.5px]">
-            <caption className="sr-only">Sale packages (this session)</caption>
+          <table className="stack-table w-full border-collapse text-left text-[14.5px]">
+            <caption className="sr-only">Sale packages</caption>
             <thead>
               <tr className="border-b border-line text-[13px] text-muted">
                 <th scope="col" className="px-6 py-3 font-medium">Package name</th>
@@ -59,9 +78,7 @@ export function PackagesView() {
               </tr>
             </thead>
             <tbody>
-              {packages.length === 0 && (
-                <tr><td colSpan={2} className="px-6 py-10 text-center text-muted">No packages yet. Add one to use it in Package Sales.</td></tr>
-              )}
+              <ListStatusRow state={listState} colSpan={2} empty="No packages yet. Add one to use it in Package Sales." retry={reload} />
               {packages.map((p) => (
                 <tr key={p.id} className="border-b border-line last:border-b-0">
                   <td className="px-6 py-2 font-semibold">{p.name}</td>
@@ -83,14 +100,15 @@ export function PackagesView() {
             <h2 className="text-[16px] font-semibold">{editingId ? "Edit package" : "Add package"}</h2>
             <TextField id="pkg-name" label="Package name" value={name} placeholder="e.g. Standard" error={error}
               onChange={(v) => { setName(stripControlChars(v)); setError(undefined); }} />
+            {formError && <p role="alert" className="text-[14px] text-[#C62828]">{formError}</p>}
             <div className="flex flex-wrap justify-end gap-3">
               {editingId && (
                 <button type="button" onClick={reset} className="min-h-11 rounded-xl border border-line px-4 text-[15px] font-semibold hover:bg-canvas">
                   Cancel edit
                 </button>
               )}
-              <button type="submit" className="min-h-11 rounded-xl bg-brand px-5 text-[15px] font-semibold text-white hover:brightness-95">
-                {editingId ? "Save changes" : "Add package"}
+              <button type="submit" disabled={busy} className="min-h-11 rounded-xl bg-brand px-5 text-[15px] font-semibold text-white hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-60">
+                {busy ? "Saving…" : editingId ? "Save changes" : "Add package"}
               </button>
             </div>
           </form>

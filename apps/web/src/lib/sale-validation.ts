@@ -6,7 +6,7 @@ import { MAX_NOTES, parseMoney, sanitizeNotes } from "./purchase-validation";
 import { formatKes } from "./sales-format";
 import { saleTotalMinor, type PackageSale, type SalePackage } from "./sales";
 import type { GpsDevice, GpsSource } from "./gps-platform";
-import type { PurchaseItemType, StockEntry } from "./purchases";
+import type { StockLookup } from "./purchases";
 
 export { sanitizeNotes, sanitizeNumberInput } from "./purchase-validation";
 
@@ -36,8 +36,13 @@ export const hostingPackageOf = (packages: SalePackage[]): SalePackage | undefin
 
 /** The Inventory category that Sale line 1 draws its models from. */
 export const GPS_TRACKER_CATEGORY = "GPS Trackers";
-export const trackerCategory = (categories: ProductCategory[]): ProductCategory | undefined =>
-  categories.find((c) => c.name.trim().toLowerCase() === GPS_TRACKER_CATEGORY.toLowerCase());
+/** "GPS Trackers" exactly; otherwise the only category whose name mentions GPS (so "Gps tracker" or a typo still works). */
+export const trackerCategory = (categories: ProductCategory[]): ProductCategory | undefined => {
+  const exact = categories.find((c) => c.name.trim().toLowerCase() === GPS_TRACKER_CATEGORY.toLowerCase());
+  if (exact) return exact;
+  const gps = categories.filter((c) => /gps/i.test(c.name));
+  return gps.length === 1 ? gps[0] : undefined;
+};
 
 // ------------------------------------------------------------------ profit
 
@@ -81,6 +86,11 @@ export function saleProfit(i: {
 
 /** Deduction quantity: exactly 0, 0.5 or 1. */
 export const DEDUCTION_VALUES = [0, 0.5, 1] as const;
+/** Card types a Package or Hosting Sale can sell, and the deduction quantities each allows. */
+export const SALE_CARD_DEDUCTIONS: Record<string, readonly number[]> = { "New Card": [0, 1], "Lifelong Card": [0.5, 1] };
+export const SALE_CARD_TYPES = Object.keys(SALE_CARD_DEDUCTIONS);
+export const deductionsFor = (cardType: string): readonly number[] => SALE_CARD_DEDUCTIONS[cardType] ?? [];
+
 export function parseDeduction(raw: string): { value?: number; error?: string } {
   const s = stripControlChars(raw).trim();
   if (!s) return { error: "Select a deduction quantity (0, 0.5 or 1)" };
@@ -103,6 +113,8 @@ export type PackageSaleDraft = {
   productId: string;
   platformId: string;
   cardType: string;
+  /** New Card only: the renewal fee (KES). */
+  renewalFee?: string;
   deduction: string;
   simId: string;
   technicianId: string;
@@ -115,14 +127,45 @@ export type PackageSaleDraft = {
   notes: string;
   /** Take one of the chosen SIM card out of inventory stock when the sale is completed. */
   deductSim: boolean;
+  /** Prepaid SIMs only; ignored for other SIM types. */
+  smsReminder?: boolean;
+  autoRecharge?: boolean;
   /** Extra costs of the sale. A row left completely empty is ignored. */
   otherExpenses: OtherExpenseDraft[];
+  /**
+   * An old sale (made before this system): recorded for tracking only. Nothing is taken from stock, and price,
+   * payment, expenses and profit are not recorded, so it never changes inventory, revenue or profit.
+   */
+  oldSale?: boolean;
+  /**
+   * Old sales only. The original sale date is the IMEI's activation date on GPSPlatform; this typed date is used only
+   * when GPSPlatform has no activation date for the device (YYYY-MM-DD, today or earlier).
+   */
+  saleDate?: string;
 };
+
+/** The IMEI activation date GPSPlatform gave, as YYYY-MM-DD, or null when it gave none (or not a date). */
+export function oldSaleDateOf(device: GpsDevice | undefined): string | null {
+  const m = device?.activationDate ? /^(\d{4}-\d{2}-\d{2})/.exec(device.activationDate) : null;
+  return m ? m[1] : null;
+}
+
+/** Old sales: the original sale date must be a real date, not in the future, and not before 2000. */
+export function parseSaleDate(raw: string, today: string): { value?: string; error?: string } {
+  const s = stripControlChars(raw).trim();
+  if (!s) return { error: "GPSPlatform has no activation date for this IMEI. Enter the original sale date" };
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+  const d = m ? new Date(Date.UTC(+m[1], +m[2] - 1, +m[3])) : null;
+  if (!m || !d || d.getUTCMonth() !== +m[2] - 1 || d.getUTCDate() !== +m[3]) return { error: "Enter a valid date" };
+  if (s > today) return { error: "The original sale date cannot be in the future" };
+  if (s < "2000-01-01") return { error: "The original sale date must be in 2000 or later" };
+  return { value: s };
+}
 
 export type VerifiedDevice = { device: GpsDevice; source: GpsSource };
 
 export type PackageSaleContext = {
-  /** A Hosting Sale has no tracker line, and its deduction and SIM card are optional. */
+  /** A Hosting Sale has no tracker line; its SIM card deduction is optional. */
   kind: "Package Sale" | "Hosting Sale";
   verified: VerifiedDevice | null;
   customers: Customer[];
@@ -133,18 +176,40 @@ export type PackageSaleContext = {
   simCards: SimCard[];
   technicians: Technician[];
   /** Stock and latest buying price from Purchases. */
-  stockOf: (type: PurchaseItemType, id: string) => StockEntry;
+  stockOf: StockLookup;
+  /** Today (YYYY-MM-DD, Nairobi): an old sale's date cannot be later. */
+  today?: string;
 };
 
 /** Error keys: imei, customer, package, price, product, platform, cardType, deduction, sim,
  *  technician, installation, transport, commission, paid, notes. */
 export type SaleErrors = Record<string, string>;
 
+/** Local IoT and International IoT SIMs are billed under Billing → IoT SIM. */
+export const isIotSim = (type: string) => type === "Local IoT" || type === "International IoT";
+
+/** Whether the airtime alert / automatic recharge choice is offered for this SIM on this kind of sale. */
+export const airtimeAllowed = (kind: "Package Sale" | "Hosting Sale", simType: string) =>
+  !isIotSim(simType) && (simType === "Prepaid" || kind === "Hosting Sale");
+
+/** Selling a New Card also records the platform expiration date and the renewal fee. */
+export const NEW_CARD = "New Card";
+
 export function validatePackageSale(
   d: PackageSaleDraft,
   ctx: PackageSaleContext,
-): { errors: SaleErrors; result?: Omit<PackageSale, "id"> } {
+): { errors: SaleErrors; result?: Omit<PackageSale, "id" | "createdAt" | "stockTaken">; saleDate?: string } {
   const errors: SaleErrors = {};
+  // An old sale is tracking only: it skips every stock check and records no money.
+  const old = !!d.oldSale;
+  // An old sale is dated on the IMEI's activation date from GPSPlatform; a typed date is only used when it has none.
+  const activation = oldSaleDateOf(ctx.verified?.device);
+  const saleDate = !old
+    ? { value: undefined as string | undefined }
+    : parseSaleDate(activation ?? d.saleDate ?? "", ctx.today ?? new Date().toISOString().slice(0, 10));
+  if (old && ctx.verified && "error" in saleDate && saleDate.error) {
+    errors.saleDate = activation ? `The IMEI activation date (${activation}) cannot be used: ${saleDate.error.toLowerCase()}` : saleDate.error;
+  }
 
   if (!ctx.verified) errors.imei = "Verify the IMEI before completing the sale";
 
@@ -166,21 +231,43 @@ export function validatePackageSale(
     if (!category) errors.product = `Add a "${GPS_TRACKER_CATEGORY}" category in Inventory first`;
     else if (!d.productId) errors.product = "Select a tracker model";
     else if (!product) errors.product = "Select a valid model";
+    else if (!old && ctx.stockOf("Product", product.id).quantity < 1) errors.product = `${product.model} is out of stock. Receive a purchase for it before selling`;
   }
 
   const platform = ctx.platforms.find((p) => p.id === d.platformId);
   if (!d.platformId) errors.platform = "Select a platform";
   else if (!platform) errors.platform = "Select a valid platform";
   if (!d.cardType) errors.cardType = "Select a card type";
+  else if (!SALE_CARD_TYPES.includes(d.cardType)) errors.cardType = "Only a New Card or Lifelong Card can be sold";
   else if (platform && !platform.licenceTypes.includes(d.cardType)) errors.cardType = "Select a valid card type";
-  // Hosting: an empty deduction means none (0).
-  const deduction = hosting && !d.deduction ? { value: 0 } : parseDeduction(d.deduction);
+  // A New Card needs the renewal fee the customer will pay when the licence expires.
+  const isNewCard = d.cardType === NEW_CARD;
+  const renewal = isNewCard ? parseMoney(d.renewalFee ?? "", "Renewal fee", MAX_AMOUNT_MINOR) : { value: undefined as number | undefined };
+  if (isNewCard && "error" in renewal && renewal.error) errors.renewalFee = renewal.error;
+  // The deduction is required and depends on the card type: New Card 0 or 1, Lifelong Card 0.5 or 1.
+  // An old sale takes no licence from stock, so its deduction is always 0.
+  let deduction = old ? { value: 0 } : parseDeduction(d.deduction);
+  const allowed = deductionsFor(d.cardType);
+  if (old) {
+    // nothing to check
+  } else if (!d.deduction.trim()) deduction = { error: "Select a deduction quantity" };
+  else if (!deduction.error && allowed.length && !allowed.includes(deduction.value!))
+    deduction = { error: `For a ${d.cardType} the deduction must be ${allowed.join(" or ")}` };
   if (deduction.error) errors.deduction = deduction.error;
+  // The licence deduction is taken out of that card type's stock, so there must be enough.
+  else if (platform && deduction.value && deduction.value > 0 && !errors.cardType) {
+    const left = ctx.stockOf("Platform", platform.id, d.cardType).quantity;
+    if (left < deduction.value) errors.deduction = left <= 0 ? `${platform.name} has no ${d.cardType}s in stock` : `Only ${left} ${platform.name} ${d.cardType}${left === 1 ? "" : "s"} in stock`;
+  }
 
+  const simDeducted = old ? false : ctx.kind === "Hosting Sale" ? d.deductSim : true;
   const sim = ctx.simCards.find((s) => s.id === d.simId);
   if (!d.simId) errors.sim = "Select a SIM card";
   else if (!sim) errors.sim = "Select a valid SIM card";
-  else if (d.deductSim && ctx.stockOf("SIM Card", sim.id).quantity < 1) errors.deductSim = "No stock left for this SIM card, so it cannot be deducted";
+  // A Package Sale always takes its SIM card from stock; a Hosting Sale only when "Deduct from inventory" is ticked
+  // (the customer may bring their own SIM).
+  else if (simDeducted && ctx.stockOf("SIM Card", sim.id).quantity < 1) errors.sim = `${sim.name} ${sim.type} is out of stock`;
+  if (d.smsReminder && d.autoRecharge) errors.simService = "Choose either the SMS reminder or automatic airtime recharge, not both";
 
   const technician = ctx.technicians.find((t) => t.id === d.technicianId);
   // Optional: a sale may have no technician.
@@ -193,12 +280,13 @@ export function validatePackageSale(
     if (r.error) errors[key] = r.error;
     return r.value;
   };
-  const installation = money("installation", "Installation", d.installation);
-  const transport = money("transport", "Transport", d.transport);
-  const commission = money("commission", "Commission", d.commission);
+  // An old sale records no money, so expenses, price and payment are not read.
+  const installation = old ? 0 : money("installation", "Installation", d.installation);
+  const transport = old ? 0 : money("transport", "Transport", d.transport);
+  const commission = old ? 0 : money("commission", "Commission", d.commission);
 
   const other: { description: string; amountMinor: number }[] = [];
-  for (const row of d.otherExpenses) {
+  for (const row of old ? [] : d.otherExpenses) {
     const description = stripControlChars(row.description).trim();
     const amount = row.amount.trim();
     if (!description && !amount) continue; // an untouched row is ignored
@@ -218,11 +306,11 @@ export function validatePackageSale(
   const notes = sanitizeNotes(d.notes).trim();
   if (notes.length > MAX_NOTES) errors.notes = `Notes must be ${MAX_NOTES} characters or fewer`;
 
-  const price = parseMoney(d.price, "Package price", MAX_AMOUNT_MINOR);
+  const price = old ? { value: 0 } : parseMoney(d.price, "Package price", MAX_AMOUNT_MINOR);
   if (price.error) errors.price = price.error;
-  else if (price.value === 0) errors.price = "Package price must be greater than zero";
-  const totalMinor = price.value !== undefined && !errors.price ? saleTotalMinor(price.value) : undefined;
-  const paid = parseMoney(d.paid, "Amount paid", Number.MAX_SAFE_INTEGER);
+  else if (!old && price.value === 0) errors.price = "Package price must be greater than zero";
+  const totalMinor = old ? 0 : price.value !== undefined && !errors.price ? saleTotalMinor(price.value) : undefined;
+  const paid = old ? { value: 0 } : parseMoney(d.paid, "Amount paid", Number.MAX_SAFE_INTEGER);
   if (paid.error) errors.paid = paid.error;
   else if (totalMinor !== undefined && paid.value! > totalMinor)
     errors.paid = `Amount paid cannot be more than the sale total (${formatKes(totalMinor)})`;
@@ -237,11 +325,13 @@ export function validatePackageSale(
     return { errors };
   }
 
-  const profit = saleProfit({
+  const profit = old
+    ? { costMinor: { tracker: 0, sim: 0, licence: 0 }, costMissing: [], expensesMinor: 0, profitMinor: 0 }
+    : saleProfit({
     totalMinor,
     trackerPriceMinor: product ? ctx.stockOf("Product", product.id).latestPriceMinor : 0,
     simPriceMinor: ctx.stockOf("SIM Card", sim.id).latestPriceMinor,
-    platformPriceMinor: ctx.stockOf("Platform", platform.id).latestPriceMinor,
+    platformPriceMinor: ctx.stockOf("Platform", platform.id, d.cardType).latestPriceMinor,
     deduction: deduction.value,
     expensesMinor: installation + transport + commission + other.reduce((s, o) => s + o.amountMinor, 0),
   });
@@ -262,8 +352,27 @@ export function validatePackageSale(
       packageName: pkg.name,
       packagePriceMinor: totalMinor,
       tracker: category && product ? { categoryName: category.name, productId: product.id, model: product.model } : null,
-      licence: { platformId: platform.id, platformName: platform.name, cardType: d.cardType, deduction: deduction.value },
-      sim: { id: sim.id, name: sim.name, number: device.simCard ?? "", deducted: d.deductSim },
+      licence: {
+        platformId: platform.id,
+        platformName: platform.name,
+        cardType: d.cardType,
+        deduction: deduction.value,
+        renewalFeeMinor: isNewCard ? (renewal.value ?? null) : null,
+        expirationDate: isNewCard ? (device.expirationDate ?? null) : null,
+      },
+      sim: {
+        id: sim.id,
+        name: sim.name,
+        number: device.simCard ?? "",
+        deducted: simDeducted,
+        // Airtime services never apply to IoT SIMs (they are billed under Billing → IoT SIM instead). Otherwise:
+        // prepaid SIMs, and any SIM on a Hosting Sale (often the customer's own SIM).
+        smsReminder: airtimeAllowed(ctx.kind, sim.type) && !!d.smsReminder,
+        autoRecharge: airtimeAllowed(ctx.kind, sim.type) && !!d.autoRecharge,
+        // Billing → IoT SIM only covers IoT SIMs taken from our stock (a customer's own SIM is not billed).
+        // An old sale's IoT SIM was taken from stock back then, so it is billed too.
+        iotBilling: isIotSim(sim.type) && (simDeducted || old),
+      },
       technician: technician ? { id: technician.id, name: technician.name } : null,
       expensesMinor: { installation, transport, commission, other },
       notes,
@@ -272,6 +381,8 @@ export function validatePackageSale(
       costMinor: profit.costMinor,
       costMissing: profit.costMissing,
       profitMinor: profit.profitMinor,
+      oldSale: old,
     },
+    ...(old ? { saleDate: saleDate.value } : {}),
   };
 }

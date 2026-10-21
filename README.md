@@ -2,10 +2,9 @@
 
 ERP platform for Kentracks GPS.
 
-> **Status: frontend only.** The repository currently contains the web interface
-> built on static sample data. There is no backend, database, authentication or
-> API yet. Anything you add in the UI lives in browser memory and is lost on
-> refresh.
+> **Status: in development.** The web interface now runs on a PostgreSQL backend
+> (CRM, Inventory, Purchases, Sales, Packages) behind real sign-in. Dashboard figures
+> are still sample data, and menu items without a page are placeholders.
 
 ## What exists today
 
@@ -63,14 +62,43 @@ Run from the repository root.
 | `pnpm lint` | ESLint |
 | `pnpm typecheck` | TypeScript type check (`tsc --noEmit`) |
 
-There is no automated test suite yet. Lint, type check and build are the quality
-checks that exist, and they are what CI runs.
+Lint, type check and build are what CI runs. The API integration suites
+(`pnpm --filter web test:auth`, `test:crm`, `test:erp`) need a running server and a
+**local** database, so CI does not run them; see
+[`apps/web/tests/README.md`](apps/web/tests/README.md).
 
 ## Environment configuration
 
-The app currently reads no environment variables, so there is no `.env` file or
-`.env.example`. When configuration is introduced, document it here and commit only a
-placeholder `.env.example`; real values must never be committed (`.env*` is ignored).
+Copy [`apps/web/.env.example`](apps/web/.env.example) to `apps/web/.env.local`. The
+only required value is `DATABASE_URL`; `GPS_MOCK` and `AUTH_TRUST_PROXY` are optional and
+explained in that file. Real values must never be committed (`.env*` is ignored).
+
+```bash
+pnpm --filter web db:migrate                       # apply the migrations to DATABASE_URL (use a local database for development)
+pnpm --filter web db:dev-tenant "My company"       # local development only: creates a company row and prints its id
+pnpm --filter web auth:user create --email you@company.com --name "Your Name" --tenant-id <id>
+pnpm dev
+```
+
+## Authentication
+
+- **Sign-in** at `/login` checks email and password against the `users` table. Passwords
+  are stored only as salted scrypt hashes.
+- **Sessions** are random tokens in an HttpOnly, SameSite=Lax cookie (`Secure` over HTTPS).
+  Only a hash of the token is stored, so logout and expiry really end the session on the
+  server. Lifetimes: 12 hours (4 hours idle), or 30 days (14 days idle) with *Remember me*.
+- **Company isolation**: every API request takes its company (tenant) from the signed-in
+  user's session. Nothing the browser sends can choose or override it.
+- **Route protection**: `src/proxy.ts` sends signed-out visitors to `/login` and returns
+  them to the page they wanted; every API route also checks the session itself and answers
+  401 without one.
+- **Rate limiting**: 8 failed attempts per account in 15 minutes lock sign-in for that account.
+- **Accounts** are created by an administrator with `pnpm --filter web auth:user`
+  (`create`, `set-password`, `disable`, `enable`, `list`). There is no public sign-up, no
+  default account and no self-service password reset: "Forgot password" tells the user to
+  ask an administrator, who runs `set-password` (this also signs the user out everywhere).
+- There is **no development authentication bypass**. Roles and permissions are not
+  implemented yet: every signed-in user of a company can use every feature.
 
 ## Project structure
 
@@ -86,6 +114,9 @@ apps/web/
       technicians/  Technicians list and add dialog
       inventory/    Inventory pages, shared add-form dialog and the session data provider
       purchases/    Purchases list and add-purchase dialog
+      auth/         Sign-in page pieces
+    server/         Server only: auth/ (users, sessions, hashing, rate limit), crm/ and erp/ (schema, API logic)
+    proxy.ts        Route protection (redirects signed-out visitors to /login)
     config/         Navigation menu definition (single source of truth for the sidebar)
     lib/            Data types and sample data per module, plus validation
 .github/workflows/  CI
@@ -106,11 +137,10 @@ lockfile, lint, type check and build (Node 22). It has read-only repository perm
 
 ## Before this can hold real data
 
-The frontend alone cannot provide any of the following; they are backend work that has
-not been started:
+Still not done:
 
-- Authentication and role-based authorisation
-- Company-level (multi-tenant) data isolation enforced on the server
-- Server-side validation, pagination, search and sorting (the tables currently render
-  every row they are given)
-- Audit logging and secure handling of integrations
+- Role-based authorisation (all signed-in users of a company have full access)
+- Multi-factor sign-in, an emailed password-reset flow, a password-change screen and session management screens
+- Same-company enforcement by the database itself (isolation is enforced by the application's queries)
+- Pagination, search and sorting on the server (lists are capped, not paged)
+- Audit logging, security headers/CSP, and the real GPSPlatform integration (only a mock exists)

@@ -1,0 +1,2 @@
+ALTER TABLE "stock_adjustments" ADD COLUMN "card_type" "card_type";--> statement-breakpoint
+ALTER TABLE "stock_adjustments" ADD CONSTRAINT "stock_adjustments_card_type" CHECK ("stock_adjustments"."card_type" IS NULL OR "stock_adjustments"."item_type" = 'Platform');

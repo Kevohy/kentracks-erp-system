@@ -5,7 +5,9 @@ import { Eye, Plus } from "lucide-react";
 import { PageHeader } from "@/components/shell/PageHeader";
 import { Card } from "@/components/dashboard/Card";
 import { cn } from "@/lib/cn";
-import { sampleCustomers, type Customer, type CustomerType } from "@/lib/customers";
+import { crmApi } from "@/lib/crm-api";
+import type { CustomerType } from "@/lib/customers";
+import { ListStatusRow, useCrmList } from "@/components/crm/useCrmList";
 import { AddCustomerDialog } from "./AddCustomerDialog";
 import { CustomerDetailsDialog } from "./CustomerDetailsDialog";
 
@@ -16,7 +18,10 @@ const typeStyle: Record<CustomerType, string> = {
 };
 
 export function CustomersView() {
-  const [customers, setCustomers] = useState<Customer[]>(sampleCustomers);
+  const { state, retry, prepend, replace } = useCrmList(crmApi.customers.list);
+  const { state: brandState } = useCrmList(crmApi.brands.list);
+  const brands = brandState.status === "ready" ? brandState.items : [];
+  const customers = state.status === "ready" ? state.items : [];
   const [open, setOpen] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const selected = customers.find((c) => c.id === selectedId) ?? null;
@@ -39,11 +44,11 @@ export function CustomersView() {
 
       <Card className="overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[820px] border-collapse text-left text-[14.5px]">
-            <caption className="sr-only">Customers (sample data)</caption>
+          <table className="stack-table w-full min-w-[900px] border-collapse text-left text-[14.5px]">
+            <caption className="sr-only">Customers</caption>
             <thead>
               <tr className="border-b border-line text-[13px] text-muted">
-                {["Name", "Type", "Account", "Phone Number", "Email", "Location"].map((h) => (
+                {["Name", "Type", "Brand", "Account", "Phone Number", "Email", "Location"].map((h) => (
                   <th key={h} scope="col" className="px-4 py-3 font-medium first:pl-6 last:pr-6">
                     {h}
                   </th>
@@ -54,6 +59,7 @@ export function CustomersView() {
               </tr>
             </thead>
             <tbody>
+              <ListStatusRow state={state} colSpan={8} empty="No customers yet. Use Add Customer to create the first one." retry={retry} />
               {customers.map((c) => (
                 <tr key={c.id} className="border-b border-line last:border-b-0">
                   <th scope="row" className="px-4 py-3.5 pl-6 font-semibold">
@@ -63,6 +69,9 @@ export function CustomersView() {
                     <span className={cn("rounded-full px-2.5 py-1 text-[12.5px] font-medium", typeStyle[c.type])}>
                       {c.type}
                     </span>
+                  </td>
+                  <td className="px-4 py-3.5">
+                    {c.brandName ? <span className="rounded-full bg-canvas px-2.5 py-1 text-[12.5px] font-medium text-ink">{c.brandName}</span> : <span className="text-muted">—</span>}
                   </td>
                   <td className="px-4 py-3.5">{c.account}</td>
                   <td className="whitespace-nowrap px-4 py-3.5">{c.phone}</td>
@@ -87,14 +96,24 @@ export function CustomersView() {
       </Card>
 
       <AddCustomerDialog
+        brands={brands}
         open={open}
         onClose={() => setOpen(false)}
-        onAdd={(c) => setCustomers((prev) => [c, ...prev])}
+        onAdd={async (type, values) => {
+          const r = await crmApi.customers.create(type, values);
+          if (r.ok) prepend(r.data);
+          return r.ok ? { ok: true } : r;
+        }}
       />
       <CustomerDetailsDialog
+        brands={brands}
         customer={selected}
         onClose={() => setSelectedId(null)}
-        onSave={(updated) => setCustomers((prev) => prev.map((c) => (c.id === updated.id ? updated : c)))}
+        onSave={async (c, values) => {
+          const r = await crmApi.customers.update(c.id, c.type as CustomerType, values);
+          if (r.ok) replace(r.data);
+          return r.ok ? { ok: true } : r;
+        }}
       />
     </>
   );

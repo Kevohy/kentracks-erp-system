@@ -3,29 +3,40 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { X } from "lucide-react";
 import { cn } from "@/lib/cn";
-import { customerTypes, fromFormValues, type Customer, type CustomerType } from "@/lib/customers";
-import { CustomerFields } from "./CustomerFields";
+import { defaultBrandId, type Brand } from "@/lib/brands";
+import type { SaveResult } from "@/lib/crm-api";
+import { customerTypes, type CustomerType } from "@/lib/customers";
+import { CustomerFields, type Values } from "./CustomerFields";
 import { useCustomerForm } from "./useCustomerForm";
 
 export function AddCustomerDialog({
   open,
   onClose,
   onAdd,
+  brands,
+  initial,
 }: {
   open: boolean;
   onClose: () => void;
-  onAdd: (customer: Customer) => void;
+  onAdd: (type: CustomerType, values: Values) => Promise<SaveResult>;
+  brands: Brand[];
+  /** Pre-filled values (for example the contact of a GPS device); the user can change everything. */
+  initial?: { type?: CustomerType; values?: Values };
 }) {
   const ref = useRef<HTMLDialogElement>(null);
   const [type, setType] = useState<CustomerType>("End User");
   const form = useCustomerForm(ref);
+  const saving = useRef(false);
+  const [busy, setBusy] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
 
   useEffect(() => {
     const d = ref.current;
     if (!d) return;
     if (open && !d.open) {
-      setType("End User");
-      form.reset();
+      setType(initial?.type ?? "End User");
+      setFormError(null);
+      form.reset({ brandId: defaultBrandId(brands), ...initial?.values });
       d.showModal();
     } else if (!open && d.open) {
       d.close();
@@ -33,12 +44,26 @@ export function AddCustomerDialog({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
-  function submit(e: FormEvent) {
+  // The brand list may arrive after the dialog opened: fill in the default as soon as it does.
+  useEffect(() => {
+    if (open && !form.values.brandId && brands.length) form.change("brandId", defaultBrandId(brands));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, brands]);
+
+  async function submit(e: FormEvent) {
     e.preventDefault();
+    if (saving.current) return; // a second click or Enter while saving must not create a duplicate
     const clean = form.validate(type);
     if (!clean) return;
-    onAdd(fromFormValues(`new-${Date.now()}`, type, clean));
-    onClose();
+    saving.current = true;
+    setBusy(true);
+    setFormError(null);
+    const r = await onAdd(type, clean);
+    saving.current = false;
+    setBusy(false);
+    if (r.ok) return onClose();
+    form.applyServerErrors(r.fieldErrors);
+    setFormError(Object.keys(r.fieldErrors).length ? null : r.message);
   }
 
   return (
@@ -92,7 +117,12 @@ export function AddCustomerDialog({
             </div>
           </fieldset>
 
-          <CustomerFields type={type} values={form.values} errors={form.errors} onChange={form.change} onBlur={form.blur} />
+          <CustomerFields type={type} values={form.values} errors={form.errors} onChange={form.change} onBlur={form.blur} brands={brands} idPrefix="cust-add" />
+          {formError && (
+            <p role="alert" className="text-[13.5px] text-[#C62828]">
+              {formError}
+            </p>
+          )}
         </div>
 
         <div className="flex justify-end gap-3 border-t border-line px-5 py-4 sm:px-6">
@@ -103,8 +133,8 @@ export function AddCustomerDialog({
           >
             Cancel
           </button>
-          <button type="submit" className="min-h-11 rounded-xl bg-brand px-5 text-[15px] font-semibold text-white hover:brightness-95">
-            Save Customer
+          <button type="submit" disabled={busy} className="min-h-11 rounded-xl bg-brand px-5 text-[15px] font-semibold text-white hover:brightness-95 disabled:opacity-60">
+            {busy ? "Saving…" : "Save Customer"}
           </button>
         </div>
       </form>

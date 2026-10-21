@@ -1,13 +1,16 @@
 "use client";
 
+import { stockNote } from "./PackageSaleForm";
 import { useRef, useState, type FormEvent } from "react";
 import Link from "next/link";
 import { CheckCircle2, Plus, Trash2, TriangleAlert } from "lucide-react";
 import { Card } from "@/components/dashboard/Card";
 import { useInventory } from "@/components/inventory/InventoryProvider";
 import { cn } from "@/lib/cn";
-import { sampleCustomers } from "@/lib/customers";
-import { customerMatches, customerOptions } from "@/lib/customer-search";
+import { useCrmLookups } from "@/components/crm/useCrmLookups";
+import { erpApi, newClientKey } from "@/lib/erp-api";
+import { customerMatchesIn, customerOptionsOf } from "@/lib/customer-search";
+import { LoadGate, notReady } from "./LoadGate";
 import { parseMoney } from "@/lib/purchase-validation";
 import {
   MAX_LINES,
@@ -34,8 +37,12 @@ const addButton = "inline-flex min-h-11 items-center gap-2 rounded-xl border bor
 const initialDraft = (): RetailerDraft => ({ customerId: "", productLines: [emptyProductLine("p0")], cardLines: [], paid: "0" });
 
 export function RetailerSaleForm() {
-  const { categories, products, platforms, stockOf } = useInventory();
-  const { addSale } = useSales();
+  const { load: inventoryLoad, reload: reloadInventory, categories, products, platforms, stockOf, refreshStock } = useInventory();
+  const { load: salesLoad, reload: reloadSales, saveSale } = useSales();
+  const { state: crm, retry: retryCrm } = useCrmLookups({ customers: true });
+  const customers = crm.status === "ready" ? crm.customers : [];
+  const [busy, setBusy] = useState(false);
+  const [formError, setFormError] = useState("");
 
   const [draft, setDraft] = useState<RetailerDraft>(initialDraft);
   const [errors, setErrors] = useState<RetailerErrors>({});
@@ -45,7 +52,7 @@ export function RetailerSaleForm() {
   const submitted = useRef(false);
   const saleKey = useRef<string | null>(null);
 
-  const ctx = { customers: sampleCustomers, categories, products, platforms, stockOf };
+  const ctx = { customers, categories, products, platforms, stockOf };
 
   const clear = (...keys: string[]) =>
     setErrors((p) => (keys.some((k) => p[k]) ? Object.fromEntries(Object.entries(p).filter(([k]) => !keys.includes(k))) : p));
@@ -75,9 +82,9 @@ export function RetailerSaleForm() {
     clear("paid");
   };
 
-  function submit(e: FormEvent) {
+  async function submit(e: FormEvent) {
     e.preventDefault();
-    if (submitted.current) return; // already saved: a second click or Enter must not add another sale
+    if (submitted.current) return; // already saving or saved: a second click or Enter must not add another sale
     const { errors: found, result } = validateRetailerSale(draft, ctx);
     setErrors(found);
     if (!result) {
@@ -86,10 +93,24 @@ export function RetailerSaleForm() {
       return;
     }
     submitted.current = true;
-    saleKey.current ??= `sale-${Date.now().toString(36)}-${++seq.current}`;
-    const sale: RetailerSale = { ...result, id: saleKey.current };
-    addSale(sale);
-    setSaved(sale);
+    setBusy(true);
+    setFormError("");
+    // One key per sale form: sending it again (retry after a timeout) returns the sale already saved.
+    saleKey.current ??= newClientKey();
+    const key = saleKey.current;
+    // The server repeats every check and works out the totals, costs and profit itself.
+    const r = await saveSale(() => erpApi.sales.createRetailer(draft, key));
+    setBusy(false);
+    if (!r.ok) {
+      submitted.current = false;
+      setErrors(r.fieldErrors);
+      setFormError(r.message);
+      const els = Array.from(rootRef.current?.querySelectorAll<HTMLElement>("[data-field]") ?? []);
+      els.find((el) => r.fieldErrors[el.dataset.field ?? ""])?.focus();
+      return;
+    }
+    setSaved(r.data as RetailerSale);
+    void refreshStock(); // the products sold left inventory
   }
 
   function startNew() {
@@ -107,7 +128,12 @@ export function RetailerSaleForm() {
   const payable = live.hasLines && paidMinor !== undefined && paidMinor <= live.totalMinor;
   const balance = payable ? live.totalMinor - paidMinor : undefined;
   const state = payable ? paymentState({ totalMinor: live.totalMinor, paidMinor }) : undefined;
-  const customer = sampleCustomers.find((c) => c.id === draft.customerId);
+  const customer = customers.find((c) => c.id === draft.customerId);
+
+  const gate = [inventoryLoad, salesLoad, crm];
+  if (notReady(gate)) {
+    return <LoadGate states={gate} retry={() => { reloadInventory(); reloadSales(); retryCrm(); }} />;
+  }
 
   // ------------------------------------------------------------ confirmation
 
@@ -119,7 +145,7 @@ export function RetailerSaleForm() {
           <CheckCircle2 size={26} className="mt-0.5 shrink-0 text-[#1B5E20]" aria-hidden="true" />
           <div>
             <h2 className="text-lg font-semibold">Sale completed</h2>
-            <p className="text-[14.5px] text-muted">Saved to the Sales list for this session. Nothing is stored permanently.</p>
+            <p className="text-[14.5px] text-muted">Saved to the Sales list.</p>
           </div>
         </div>
         <dl className="grid gap-x-6 gap-y-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -161,8 +187,8 @@ export function RetailerSaleForm() {
     <form ref={rootRef} onSubmit={submit} noValidate className="flex flex-col gap-5">
       <FormSection n={1} title="Customer">
         <SearchableSelect id="sale-customer" name="customer" label="CRM customer" value={draft.customerId} error={errors.customer}
-          options={customerOptions} searchPlaceholder="Search by name, account, phone, email or location" emptyText="No customers match your search"
-          filter={customerMatches}
+          options={customerOptionsOf(customers)} searchPlaceholder="Search by name, account, phone, email or location" emptyText="No customers match your search"
+          filter={customerMatchesIn(customers)}
           onChange={(v) => { setDraft((d) => ({ ...d, customerId: v })); clear("customer"); }} />
         {customer && (
           <dl className="grid gap-x-6 gap-y-3 rounded-xl bg-canvas p-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -178,9 +204,10 @@ export function RetailerSaleForm() {
 
       <FormSection n={2} title="Products">
         {errors.items && <p role="alert" className="text-[13.5px] text-[#C62828]">{errors.items}</p>}
+        {draft.productLines.length === 0 && <p className="text-[14px] text-muted">No product lines. Use Add Product to sell products.</p>}
         {draft.productLines.map((l, i) => {
           const info = live.products[l.key];
-          const models = products.filter((p) => p.categoryId === l.categoryId).map((p) => ({ value: p.id, label: p.model }));
+          const models = products.filter((p) => p.categoryId === l.categoryId).map((p) => ({ value: p.id, label: p.model + stockNote(stockOf("Product", p.id).quantity) }));
           return (
             <fieldset key={l.key} className="flex flex-col gap-3 rounded-xl border border-line p-4">
               <legend className="px-1 text-[13px] font-semibold text-muted">Product {i + 1}</legend>
@@ -212,6 +239,7 @@ export function RetailerSaleForm() {
       </FormSection>
 
       <FormSection n={3} title="Platform cards">
+        {draft.cardLines.length === 0 && <p className="text-[14px] text-muted">No platform card lines. Use Add Platform Card to sell cards.</p>}
         {draft.cardLines.map((l, i) => {
           const info = live.cards[l.key];
           return (
@@ -221,8 +249,12 @@ export function RetailerSaleForm() {
                 <SelectField id={`sale-c-${l.key}-platform`} name={`c-${l.key}-platform`} label="Platform" value={l.platformId} error={errors[`c-${l.key}-platform`]}
                   options={platforms.map((p) => ({ value: p.id, label: p.name }))} onChange={(v) => patchCard(l.key, { platformId: v }, "platform")} />
                 <SelectField id={`sale-c-${l.key}-cardType`} name={`c-${l.key}-cardType`} label="Card type" value={l.cardType} error={errors[`c-${l.key}-cardType`]}
-                  options={CARD_TYPES.map((t) => ({ value: t, label: t }))} onChange={(v) => patchCard(l.key, { cardType: v }, "cardType")} />
+                  options={CARD_TYPES.map((t) => {
+                    const n = l.platformId ? stockOf("Platform", l.platformId, t).quantity : null;
+                    return { value: t, label: n === null ? t : n > 0 ? `${t} (${n} in stock)` : `${t} — out of stock` };
+                  })} onChange={(v) => patchCard(l.key, { cardType: v }, "cardType")} />
                 <TextField id={`sale-c-${l.key}-quantity`} name={`c-${l.key}-quantity`} label="Quantity" value={l.quantity} inputMode="numeric" placeholder="0"
+                  hint={l.platformId && l.cardType ? `${stockOf("Platform", l.platformId, l.cardType).quantity} ${l.cardType}s in stock` : undefined}
                   error={errors[`c-${l.key}-quantity`]} onChange={(v) => patchCard(l.key, { quantity: sanitizeNumberInput(v) }, "quantity")} />
                 <TextField id={`sale-c-${l.key}-price`} name={`c-${l.key}-price`} label="Unit price (KES)" value={l.unitPrice} inputMode="decimal" placeholder="0.00"
                   error={errors[`c-${l.key}-price`]} onChange={(v) => patchCard(l.key, { unitPrice: sanitizeNumberInput(v) }, "price")} />
@@ -282,9 +314,10 @@ export function RetailerSaleForm() {
         </div>
       </FormSection>
 
+      {formError && <p role="alert" className="text-[14px] text-[#C62828]">{formError}</p>}
       <div className="flex justify-end">
-        <button type="submit" className="min-h-12 rounded-xl bg-brand px-7 text-[16px] font-semibold text-white hover:brightness-95">
-          Complete Sale
+        <button type="submit" disabled={busy} className="min-h-12 rounded-xl bg-brand px-7 text-[16px] font-semibold text-white hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-60">
+          {busy ? "Completing…" : "Complete Sale"}
         </button>
       </div>
     </form>

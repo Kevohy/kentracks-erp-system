@@ -35,3 +35,89 @@
     outline-offset: 2px;
   }
 }
+
+/* ---- List tables: desktop polish ------------------------------------------------------------ */
+.stack-table thead tr {
+  background: #f8fafc;
+}
+.stack-table tbody tr {
+  transition: background-color 120ms;
+}
+.stack-table tbody tr:hover {
+  background: #f8fafc;
+}
+@media (prefers-reduced-motion: reduce) {
+  .stack-table tbody tr {
+    transition: none;
+  }
+}
+
+/* ---- List tables: stacked cards on phones ---------------------------------------------------- */
+/* Presentation only. Header text is copied to each cell as data-label by shell/TableLabels. */
+@media (max-width: 639px) {
+  .stack-table,
+  .stack-table tbody {
+    display: block;
+    min-width: 0 !important;
+    width: 100%;
+  }
+  .stack-table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  .stack-table tbody tr {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 14px 16px;
+  }
+  .stack-table tbody tr:hover {
+    background: transparent;
+  }
+  .stack-table tbody th[scope="row"],
+  .stack-table tbody td {
+    display: block;
+    padding: 0 !important;
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+  .stack-table tbody th[scope="row"] {
+    font-size: 16.5px;
+    padding-bottom: 4px !important;
+  }
+  .stack-table tbody td[data-label] {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 16px;
+    text-align: right;
+    white-space: normal !important;
+  }
+  .stack-table tbody td[data-label]::before {
+    content: attr(data-label);
+    flex: none;
+    color: var(--color-muted);
+    font-size: 13px;
+    text-align: left;
+  }
+  .stack-table tbody td[data-label]:empty {
+    display: none;
+  }
+  .stack-table tbody td[data-actions] {
+    margin-top: 6px;
+  }
+  .stack-table tbody td[data-actions] button {
+    width: 100%;
+    justify-content: center;
+    border: 1px solid var(--color-line);
+  }
+  /* Loading / empty / error rows keep their centred layout. */
+  .stack-table tbody td[colspan] {
+    padding: 40px 16px !important;
+    text-align: center;
+  }
+}

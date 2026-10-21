@@ -2,20 +2,28 @@
 
 import Link from "next/link";
 import { useRef, useState, useSyncExternalStore, type FormEvent } from "react";
-import { CheckCircle2, Loader2, Plus, ShieldCheck, Trash2, TriangleAlert } from "lucide-react";
+import { CheckCircle2, History, Loader2, Plus, ShieldCheck, Trash2, TriangleAlert } from "lucide-react";
 import { Card } from "@/components/dashboard/Card";
 import { useInventory } from "@/components/inventory/InventoryProvider";
 import { cn } from "@/lib/cn";
-import { sampleCustomers } from "@/lib/customers";
-import { sampleTechnicians } from "@/lib/technicians";
+import { useCrmLookups } from "@/components/crm/useCrmLookups";
+import { useCrmList } from "@/components/crm/useCrmList";
+import { AddCustomerDialog } from "@/components/customers/AddCustomerDialog";
+import { crmApi } from "@/lib/crm-api";
+import type { Customer } from "@/lib/customers";
+import { erpApi, newClientKey } from "@/lib/erp-api";
 import { MOCK_IMEIS, gpsPlatformClient, isLocalhost, sanitizeImeiInput, verifyDevice, type GpsDevice, type GpsSource } from "@/lib/gps-platform";
 import { MAX_NOTES, parseMoney } from "@/lib/purchase-validation";
 import { formatKes, formatSigned, paymentState } from "@/lib/sales-format";
 import { matchCustomer, saleTotalMinor, type PackageSale } from "@/lib/sales";
-import { MAX_OTHER_EXPENSES, hostingPackageOf, parseDeduction, saleProfit, sanitizeNotes, sanitizeNumberInput, trackerCategory, validatePackageSale, type PackageSaleDraft, type SaleErrors } from "@/lib/sale-validation";
+import { MAX_OTHER_EXPENSES, NEW_CARD, SALE_CARD_TYPES, airtimeAllowed, deductionsFor, hostingPackageOf, isIotSim, parseDeduction, saleProfit, sanitizeNotes, sanitizeNumberInput, trackerCategory, validatePackageSale, oldSaleDateOf, type PackageSaleDraft, type SaleErrors } from "@/lib/sale-validation";
 import { stripControlChars } from "@/lib/validation";
+import { todayInNairobi } from "@/lib/billing";
 import { Detail, Field, FormSection, ReadOnlyField, SelectField, TextField, controlClass } from "./fields";
-import { customerMatches, customerOptions } from "@/lib/customer-search";
+import { customerMatchesIn, customerOptionsOf } from "@/lib/customer-search";
+import { simLabel } from "@/lib/inventory";
+import { LoadGate, notReady } from "./LoadGate";
+import { DeviceCustomerPrompt } from "./DeviceCustomerPrompt";
 import { SearchableSelect } from "./SearchableSelect";
 import { useSales } from "./SalesProvider";
 
@@ -25,24 +33,39 @@ type Verify =
   | { status: "error"; message: string }
   | { status: "ok"; device: GpsDevice; missing: string[]; source: GpsSource };
 
-type Match = { kind: "matched"; name: string; by: string } | { kind: "ambiguous" } | { kind: "none" } | null;
+type Match = { kind: "matched"; name: string; by: string } | { kind: "created"; name: string } | { kind: "ambiguous" } | { kind: "none" } | null;
 
 const blankDraft: PackageSaleDraft = {
   customerId: "", customerLink: "manual", packageId: "", productId: "", platformId: "", cardType: "",
-  deduction: "", simId: "", technicianId: "", installation: "", transport: "", commission: "", price: "", paid: "0", notes: "", deductSim: false, otherExpenses: [],
+  deduction: "", simId: "", technicianId: "", installation: "", transport: "", commission: "", price: "", paid: "0", notes: "", deductSim: true, smsReminder: false, autoRecharge: false, otherExpenses: [],
+  oldSale: false, saleDate: "",
 };
 
 /** The only deduction quantities allowed. */
-const deductionOptions = ["0", "0.5", "1"].map((v) => ({ value: v, label: v }));
 
 const deviceStatusStyle = { Online: "bg-[#E6F4EA] text-[#1B5E20]", Offline: "bg-[#EEF1F4] text-[#4A5560]", Expired: "bg-[#FDECEA] text-[#B71C1C]" } as const;
 
 const statusStyle = { "Paid in full": "bg-[#E6F4EA] text-[#1B5E20]", "Partly paid": "bg-[#FFF4E5] text-[#9a3300]", Unpaid: "bg-[#FDECEA] text-[#B71C1C]" } as const;
 
+/** " (in stock: 12)" or " — out of stock", shown after an item name in a dropdown. */
+export const stockNote = (n: number, unit = "") => (n > 0 ? ` (${unit ? `${n} ${unit}` : `in stock: ${n}`}${unit ? " in stock" : ""})` : " — out of stock");
+
 export function PackageSaleForm({ kind = "Package Sale" }: { kind?: "Package Sale" | "Hosting Sale" }) {
   const hosting = kind === "Hosting Sale";
-  const { categories, products, platforms, simCards, stockOf, deductStock } = useInventory();
-  const { packages, addSale } = useSales();
+  const { load: inventoryLoad, reload: reloadInventory, categories, products, platforms, simCards, stockOf, refreshStock } = useInventory();
+  const { load: salesLoad, reload: reloadSales, packages, saveSale } = useSales();
+  const { state: crm, retry: retryCrm } = useCrmLookups({ customers: true, technicians: true });
+  // Customers added from this form (the lookup list is only read when the form opens).
+  const [added, setAdded] = useState<Customer[]>([]);
+  const crmCustomers = crm.status === "ready" ? crm.customers : [];
+  const customers = added.length ? [...added.filter((a) => !crmCustomers.some((c) => c.id === a.id)), ...crmCustomers] : crmCustomers;
+  const { state: brandState } = useCrmList(crmApi.brands.list);
+  const brands = brandState.status === "ready" ? brandState.items : [];
+  const [promptOpen, setPromptOpen] = useState(false);
+  const [addOpen, setAddOpen] = useState(false);
+  const technicians = crm.status === "ready" ? crm.technicians : [];
+  const [busy, setBusy] = useState(false);
+  const [formError, setFormError] = useState("");
 
   const [imei, setImei] = useState("");
   const [verify, setVerify] = useState<Verify>({ status: "idle" });
@@ -61,7 +84,12 @@ export function PackageSaleForm({ kind = "Package Sale" }: { kind?: "Package Sal
   const rootRef = useRef<HTMLDivElement>(null);
 
   const verified = verify.status === "ok" ? { device: verify.device, source: verify.source } : null;
-  const ctx = { kind, verified, customers: sampleCustomers, packages, categories, products, platforms, simCards, technicians: sampleTechnicians, stockOf };
+  const today = todayInNairobi();
+  const ctx = { kind, verified, customers, packages, categories, products, platforms, simCards, technicians, stockOf, today };
+  const old = !!draft.oldSale;
+  // An old sale is dated on the IMEI's activation date from GPSPlatform.
+  const activationDate = verify.status === "ok" ? oldSaleDateOf(verify.device) : null;
+  const longActivation = activationDate ? new Date(`${activationDate}T00:00:00Z`).toLocaleDateString("en-KE", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" }) : "";
 
   const clear = (...keys: string[]) =>
     setErrors((p) => (keys.some((k) => p[k]) ? Object.fromEntries(Object.entries(p).filter(([k]) => !keys.includes(k))) : p));
@@ -74,6 +102,7 @@ export function PackageSaleForm({ kind = "Package Sale" }: { kind?: "Package Sal
     if (verify.status !== "idle") {
       setVerify({ status: "idle" });
       setMatch(null);
+      setPromptOpen(false);
       // A Hosting Sale's customer is picked by hand and does not depend on the device, so it is kept.
       if (!hosting) setDraft((d) => ({ ...d, customerId: "", customerLink: "manual" }));
     }
@@ -99,7 +128,7 @@ export function PackageSaleForm({ kind = "Package Sale" }: { kind?: "Package Sal
     }
     setVerify({ status: "ok", device: out.device, missing: out.missing, source: out.source });
     // A Hosting Sale never links the customer automatically: it is always picked by hand.
-    const m = hosting ? null : matchCustomer(out.device.contact, sampleCustomers);
+    const m = hosting ? null : matchCustomer(out.device.contact, customers);
     if (!m) {
       // leave any customer the user already chose
     } else if (m.status === "matched") {
@@ -108,9 +137,32 @@ export function PackageSaleForm({ kind = "Package Sale" }: { kind?: "Package Sal
     } else {
       setDraft((d) => ({ ...d, customerId: "", customerLink: "manual" }));
       setMatch({ kind: m.status });
+      // The device's contact is not in the CRM: ask whether to add them or pick an existing customer.
+      if (m.status === "none" && out.device.contact) setPromptOpen(true);
     }
     clear("imei", "customer");
   }
+
+  function chooseExisting() {
+    setPromptOpen(false);
+    setTimeout(() => {
+      const el = document.getElementById("sale-customer");
+      el?.scrollIntoView({ block: "center", behavior: "smooth" });
+      el?.focus();
+    }, 50);
+  }
+
+  function addNewCustomer() {
+    setPromptOpen(false);
+    setAddOpen(true);
+  }
+
+  // The device contact as starting values for the new customer.
+  const deviceContact = verify.status === "ok" ? verify.device.contact : undefined;
+  const addInitial = (() => {
+    const [first = "", ...rest] = (deviceContact?.name ?? "").trim().split(/\s+/);
+    return { type: "End User" as const, values: { firstName: first, lastName: rest.join(" "), phone: deviceContact?.phone ?? "", email: deviceContact?.email ?? "" } };
+  })();
 
   // -------------------------------------------------------------- draft edits
 
@@ -130,9 +182,9 @@ export function PackageSaleForm({ kind = "Package Sale" }: { kind?: "Package Sal
     });
   }
 
-  function submit(e: FormEvent) {
+  async function submit(e: FormEvent) {
     e.preventDefault();
-    if (submitted.current) return; // already saved: a second click or Enter must not add another sale
+    if (submitted.current) return; // already saving or saved: a second click or Enter must not add another sale
     const { errors: found, result } = validatePackageSale(draft, ctx);
     setErrors(found);
     if (!result) {
@@ -141,11 +193,24 @@ export function PackageSaleForm({ kind = "Package Sale" }: { kind?: "Package Sal
       return;
     }
     submitted.current = true;
-    saleKey.current ??= `sale-${Date.now().toString(36)}-${++seq.current}`;
-    const sale: PackageSale = { ...result, id: saleKey.current };
-    addSale(sale);
-    if (sale.sim.deducted) deductStock("SIM Card", sale.sim.id, 1);
-    setSaved(sale);
+    setBusy(true);
+    setFormError("");
+    // One key per sale form: sending it again (retry after a timeout) returns the sale already saved.
+    saleKey.current ??= newClientKey();
+    const key = saleKey.current;
+    // The server verifies the IMEI again and works out the total, costs and profit itself.
+    const r = await saveSale(() => erpApi.sales.createPackage(kind, imei, draft, key));
+    setBusy(false);
+    if (!r.ok) {
+      submitted.current = false;
+      setErrors(r.fieldErrors);
+      setFormError(r.message);
+      const els = Array.from(rootRef.current?.querySelectorAll<HTMLElement>("[data-field]") ?? []);
+      els.find((el) => r.fieldErrors[el.dataset.field ?? ""])?.focus();
+      return;
+    }
+    if (!draft.oldSale) void refreshStock(); // the tracker (and SIM, if chosen) left inventory
+    setSaved(r.data as PackageSale);
   }
 
   function addExpense() {
@@ -185,7 +250,7 @@ export function PackageSaleForm({ kind = "Package Sale" }: { kind?: "Package Sal
   const expenses = [expense(draft.installation), expense(draft.transport), expense(draft.commission), ...draft.otherExpenses.map((r) => expense(r.amount))];
   const expensesTotal = expenses.every((x) => x !== undefined) ? expenses.reduce<number>((s, x) => s + (x ?? 0), 0) : undefined;
 
-  const customer = sampleCustomers.find((c) => c.id === draft.customerId);
+  const customer = customers.find((c) => c.id === draft.customerId);
   const platform = platforms.find((p) => p.id === draft.platformId);
   const trackerCat = trackerCategory(categories);
   const hostingPackage = hostingPackageOf(packages);
@@ -199,12 +264,22 @@ export function PackageSaleForm({ kind = "Package Sale" }: { kind?: "Package Sal
           totalMinor,
           trackerPriceMinor: chosenProduct ? stockOf("Product", chosenProduct.id).latestPriceMinor : 0,
           simPriceMinor: stockOf("SIM Card", chosenSim.id).latestPriceMinor,
-          platformPriceMinor: stockOf("Platform", platform.id).latestPriceMinor,
+          platformPriceMinor: stockOf("Platform", platform.id, draft.cardType).latestPriceMinor,
           deduction: deductionValue ?? 0,
           expensesMinor: expensesTotal,
         })
       : undefined;
-  const modelOptions = products.filter((p) => p.categoryId === trackerCat?.id).map((p) => ({ value: p.id, label: p.model }));
+  const modelOptions = products
+    .filter((p) => p.categoryId === trackerCat?.id)
+    .map((p) => {
+      const n = stockOf("Product", p.id).quantity;
+      return { value: p.id, label: n > 0 ? `${p.model} (in stock: ${n})` : `${p.model} — out of stock` };
+    });
+
+  const gate = [inventoryLoad, salesLoad, crm];
+  if (notReady(gate)) {
+    return <LoadGate states={gate} retry={() => { reloadInventory(); reloadSales(); retryCrm(); }} />;
+  }
 
   // ------------------------------------------------------------- confirmation
 
@@ -215,8 +290,12 @@ export function PackageSaleForm({ kind = "Package Sale" }: { kind?: "Package Sal
         <div role="status" className="flex items-start gap-3">
           <CheckCircle2 size={26} className="mt-0.5 shrink-0 text-[#1B5E20]" aria-hidden="true" />
           <div>
-            <h2 className="text-lg font-semibold">Sale completed</h2>
-            <p className="text-[14.5px] text-muted">Saved to the Sales list for this session. Nothing is stored permanently.</p>
+            <h2 className="text-lg font-semibold">{saved.oldSale ? "Old sale recorded" : "Sale completed"}</h2>
+            <p className="text-[14.5px] text-muted">
+              {saved.oldSale
+                ? "Saved to the Sales list for tracking. Nothing was taken from inventory, and it is not counted in revenue or profit."
+                : "Saved to the Sales list."}
+            </p>
           </div>
         </div>
         <dl className="grid gap-x-6 gap-y-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -224,12 +303,24 @@ export function PackageSaleForm({ kind = "Package Sale" }: { kind?: "Package Sal
           <Detail label="Vehicle number plate" value={saved.vehiclePlate} />
           <Detail label="IMEI" value={saved.imei} />
           <Detail label="Package" value={saved.packageName} />
+          {saved.licence.renewalFeeMinor != null && <Detail label="Renewal fee" value={formatKes(saved.licence.renewalFeeMinor)} />}
+          {saved.licence.expirationDate && <Detail label="Platform expiration date" value={saved.licence.expirationDate} />}
           <Detail label="SIM card" value={(saved.sim.number ? `${saved.sim.name} — ${saved.sim.number}` : saved.sim.name) + (saved.sim.deducted ? " (deducted from stock)" : "")} />
-          <Detail label="Total" value={formatKes(saved.totalMinor)} />
-          <Detail label="Amount paid" value={formatKes(saved.paidMinor)} />
-          <Detail label="Outstanding balance" value={formatKes(saved.totalMinor - saved.paidMinor)} />
-          <Detail label="Payment status" value={st} />
-          <Detail label="Profit" value={formatSigned(saved.profitMinor)} />
+          {saved.sim.iotBilling && <Detail label="Billing" value="Added to Billing → IoT SIM" />}
+          {(saved.sim.smsReminder || saved.sim.autoRecharge) && (
+            <Detail label="Airtime service" value={[saved.sim.smsReminder && "Monthly airtime alert (SMS)", saved.sim.autoRecharge && "Automatic airtime recharge"].filter(Boolean).join(", ")} />
+          )}
+          {saved.oldSale ? (
+            <Detail label="Original sale date" value={new Date(saved.createdAt).toLocaleDateString("en-KE", { day: "numeric", month: "short", year: "numeric", timeZone: "Africa/Nairobi" })} />
+          ) : (
+            <>
+              <Detail label="Total" value={formatKes(saved.totalMinor)} />
+              <Detail label="Amount paid" value={formatKes(saved.paidMinor)} />
+              <Detail label="Outstanding balance" value={formatKes(saved.totalMinor - saved.paidMinor)} />
+              <Detail label="Payment status" value={st} />
+              <Detail label="Profit" value={formatSigned(saved.profitMinor)} />
+            </>
+          )}
           <Detail label="IMEI verification" value={saved.verificationSource === "mock" ? "Mock data (not confirmed by GPSPlatform)" : "GPSPlatform"} />
         </dl>
         <div className="flex flex-wrap gap-3">
@@ -250,6 +341,31 @@ export function PackageSaleForm({ kind = "Package Sale" }: { kind?: "Package Sal
 
   return (
     <div ref={rootRef} className="flex flex-col gap-5">
+      <Card className={cn("flex flex-col gap-3 px-4 py-4 sm:px-6", old && "border-[#9DB9D0] bg-tint/60")}>
+        <label className="flex min-h-11 cursor-pointer items-center gap-3">
+          <input type="checkbox" id="sale-old" data-field="oldSale" checked={old}
+            onChange={(e) => { const on = e.target.checked; setDraft((x) => ({ ...x, oldSale: on, saleDate: on ? x.saleDate : "" })); clear("saleDate", "price", "paid", "deduction", "product", "sim"); }}
+            className="size-5 shrink-0 accent-brand" />
+          <span className="flex items-center gap-2 text-[15.5px] font-semibold"><History size={17} className="text-navy" aria-hidden="true" />Old sale (record only)</span>
+        </label>
+        {old && (
+          activationDate ? (
+            <ReadOnlyField id="sale-date" label="Original sale date (IMEI activation date)" value={longActivation} empty="" error={errors.saleDate} className="sm:max-w-sm" />
+          ) : verify.status === "ok" ? (
+            <div className="grid gap-3 sm:grid-cols-[minmax(0,240px)_1fr] sm:items-end">
+              <Field id="sale-date" label="Original sale date" error={errors.saleDate}>
+                <input id="sale-date" type="date" data-field="saleDate" max={today} min="2000-01-01" value={draft.saleDate ?? ""}
+                  onChange={(e) => set("saleDate", e.target.value, "saleDate")}
+                  aria-invalid={errors.saleDate ? true : undefined} aria-describedby={errors.saleDate ? "sale-date-err" : "sale-date-hint"}
+                  className={cn(controlClass, errors.saleDate ? "border-[#C62828]" : "border-line")} />
+              </Field>
+              <p id="sale-date-hint" className="text-[13px] text-muted sm:pb-3">GPSPlatform has no activation date for this IMEI, so enter the date it was sold.</p>
+            </div>
+          ) : (
+            <p className="text-[13.5px] text-muted">The original sale date is taken from the IMEI activation date once you verify the IMEI.</p>
+          )
+        )}
+      </Card>
       <FormSection n={1} title="Verify IMEI">
         {gpsPlatformClient.source === "mock" && local && (
           <div className="rounded-xl border border-[#F0C98C] bg-[#FFF8EC] px-4 py-3 text-[14px] text-[#6b3a00]">
@@ -338,12 +454,12 @@ export function PackageSaleForm({ kind = "Package Sale" }: { kind?: "Package Sal
           <FormSection n={2} title="Customer">
             {hosting ? (
               <SearchableSelect id="sale-customer" name="customer" label="CRM customer" value={draft.customerId} error={errors.customer}
-                options={customerOptions} searchPlaceholder="Search by name, account, phone, email or location" emptyText="No customers match your search"
-                filter={customerMatches}
+                options={customerOptionsOf(customers)} searchPlaceholder="Search by name, account, phone, email or location" emptyText="No customers match your search"
+                filter={customerMatchesIn(customers)}
                 onChange={(v) => { set("customerId", v, "customer"); setDraft((x) => ({ ...x, customerLink: "manual" })); }} />
             ) : (
               <SelectField id="sale-customer" name="customer" label="CRM customer" value={draft.customerId} error={errors.customer}
-                options={customerOptions}
+                options={customerOptionsOf(customers)}
                 onChange={(v) => { set("customerId", v, "customer"); setDraft((x) => ({ ...x, customerLink: "manual" })); }} />
             )}
             {match?.kind === "matched" && (
@@ -354,7 +470,21 @@ export function PackageSaleForm({ kind = "Package Sale" }: { kind?: "Package Sal
               </p>
             )}
             {match?.kind === "ambiguous" && <p className="text-[14px] text-muted">The GPSPlatform contact details match more than one CRM customer, so none was linked. Select the right one.</p>}
-            {match?.kind === "none" && <p className="text-[14px] text-muted">No CRM customer reliably matches the GPSPlatform contact details. Select an existing customer.</p>}
+            {match?.kind === "created" && <p className="text-[14px] text-muted">{match.name} was added to the CRM from the GPSPlatform contact and selected for this sale.</p>}
+            {match?.kind === "none" && !draft.customerId && (
+              <div className="flex flex-col gap-3 rounded-xl border border-line p-4 sm:flex-row sm:items-center sm:justify-between">
+                <p className="text-[14px] text-muted">No CRM customer matches the GPSPlatform contact details.</p>
+                <div className="flex flex-wrap gap-2">
+                  <button type="button" onClick={addNewCustomer} className="inline-flex min-h-11 items-center gap-1.5 rounded-xl bg-brand px-4 text-[14.5px] font-semibold text-white hover:brightness-95">
+                    <Plus size={16} aria-hidden="true" />
+                    Add new customer
+                  </button>
+                  <button type="button" onClick={chooseExisting} className="min-h-11 rounded-xl border border-line px-4 text-[14.5px] font-semibold hover:bg-canvas">
+                    Choose existing
+                  </button>
+                </div>
+              </div>
+            )}
             {customer && (
               <dl className="grid gap-x-6 gap-y-3 rounded-xl bg-canvas p-4 sm:grid-cols-2 lg:grid-cols-3">
                 <Detail label="Name" value={customer.name} />
@@ -377,9 +507,11 @@ export function PackageSaleForm({ kind = "Package Sale" }: { kind?: "Package Sal
                   options={packages.map((p) => ({ value: p.id, label: p.name }))}
                   onChange={(v) => set("packageId", v, "package")} />
               )}
-              <TextField id="sale-price" name="price" label="Package price (KES)" value={draft.price} inputMode="decimal" placeholder="0.00"
-                error={errors.price}
-                onChange={(v) => set("price", sanitizeNumberInput(v), "price", "paid")} onBlur={() => blur("price", draft.price.trim().length > 0)} />
+              {!old && (
+                <TextField id="sale-price" name="price" label="Package price (KES)" value={draft.price} inputMode="decimal" placeholder="0.00"
+                  error={errors.price}
+                  onChange={(v) => set("price", sanitizeNumberInput(v), "price", "paid")} onBlur={() => blur("price", draft.price.trim().length > 0)} />
+              )}
             </div>
           </FormSection>
 
@@ -389,6 +521,8 @@ export function PackageSaleForm({ kind = "Package Sale" }: { kind?: "Package Sal
                 <legend className="px-1 text-[13px] font-semibold text-muted">Line 1 — GPS Tracker</legend>
                 <SelectField id="sale-product" name="product" label="Model" value={draft.productId} error={errors.product}
                   disabled={!trackerCat} options={modelOptions} onChange={(v) => set("productId", v, "product")} />
+                {!trackerCat && <p className="text-[14px] text-muted sm:col-span-2">No GPS tracker category found. Add a product category named &quot;GPS Trackers&quot; in Inventory → Products and add your tracker models to it.</p>}
+                {trackerCat && modelOptions.length === 0 && <p className="text-[14px] text-muted sm:col-span-2">No models in &quot;{trackerCat.name}&quot; yet. Add them in Inventory → Products.</p>}
               </fieldset>
             )}
 
@@ -396,44 +530,101 @@ export function PackageSaleForm({ kind = "Package Sale" }: { kind?: "Package Sal
               <legend className="px-1 text-[13px] font-semibold text-muted">Line {hosting ? 1 : 2} — Platform licence or card</legend>
               <SelectField id="sale-platform" name="platform" label="Platform" value={draft.platformId} error={errors.platform}
                 options={platforms.map((p) => ({ value: p.id, label: p.name }))}
-                onChange={(v) => { set("platformId", v, "platform", "cardType"); setDraft((x) => ({ ...x, cardType: "" })); }} />
+                onChange={(v) => { set("platformId", v, "platform", "cardType", "deduction"); setDraft((x) => ({ ...x, cardType: "", deduction: "", renewalFee: "" })); }} />
               <SelectField id="sale-cardType" name="cardType" label="Card type" value={draft.cardType} error={errors.cardType}
-                disabled={!draft.platformId} options={(platform?.licenceTypes ?? []).map((t) => ({ value: t, label: t }))}
-                onChange={(v) => set("cardType", v, "cardType")} />
-              <SelectField id="sale-deduction" name="deduction" label={hosting ? "Deduction quantity (optional)" : "Deduction quantity"} value={draft.deduction} error={errors.deduction}
-                placeholder={hosting ? "None" : undefined} options={deductionOptions} onChange={(v) => set("deduction", v, "deduction")} />
+                disabled={!draft.platformId}
+                options={SALE_CARD_TYPES.filter((t) => platform?.licenceTypes.includes(t)).map((t) => {
+                  const n = platform ? stockOf("Platform", platform.id, t).quantity : 0;
+                  return { value: t, label: n > 0 ? `${t} (${n} in stock)` : `${t} — out of stock` };
+                })}
+                onChange={(v) => { set("cardType", v, "cardType", "renewalFee", "deduction"); setDraft((x) => ({ ...x, renewalFee: "", deduction: "" })); }} />
+              {!old && (
+                <SelectField id="sale-deduction" name="deduction" label="Deduction quantity" value={draft.deduction} error={errors.deduction}
+                  disabled={!draft.cardType} placeholder={draft.cardType ? "Select…" : "Select a card type first"}
+                  options={deductionsFor(draft.cardType).map((v) => ({ value: String(v), label: String(v) }))} onChange={(v) => set("deduction", v, "deduction")} />
+              )}
+              {draft.cardType === NEW_CARD && (
+                <>
+                  <ReadOnlyField id="sale-platform-expiry" label="Platform expiration date"
+                    value={verify.status === "ok" ? verify.device.expirationDate : undefined} empty="Not provided by GPSPlatform" />
+                  <TextField id="sale-renewal-fee" name="renewalFee" label="Renewal fee (KES)" value={draft.renewalFee ?? ""} error={errors.renewalFee}
+                    placeholder="0.00" inputMode="decimal" hint="Charged when the licence expires; not added to this sale."
+                    onChange={(v) => set("renewalFee", sanitizeNumberInput(v), "renewalFee")}
+                    onBlur={() => blur("renewalFee", (draft.renewalFee ?? "").trim().length > 0)} />
+                </>
+              )}
             </fieldset>
 
             <fieldset className="grid gap-4 rounded-xl border border-line p-4 sm:grid-cols-2">
               <legend className="px-1 text-[13px] font-semibold text-muted">Line {hosting ? 2 : 3} — SIM card</legend>
               <SelectField id="sale-sim" name="sim" label="SIM card" value={draft.simId} error={errors.sim}
-                options={simCards.map((s) => ({ value: s.id, label: s.name }))} onChange={(v) => { set("simId", v, "sim", "deductSim"); if (!v) setDraft((x) => ({ ...x, deductSim: false })); }} />
+                options={simCards.map((s) => ({ value: s.id, label: simLabel(s.name, s.type) + stockNote(stockOf("SIM Card", s.id).quantity) }))} onChange={(v) => { set("simId", v, "sim"); setDraft((x) => ({ ...x, smsReminder: false, autoRecharge: false })); }} />
               <ReadOnlyField id="sale-sim-number" label="SIM card number"
                 value={draft.simId && verify.status === "ok" ? verify.device.simCard : undefined}
                 empty={draft.simId ? "Not provided" : "Select a SIM card first"} />
-              <div className="flex flex-col gap-1 sm:col-span-2">
-                <label className={cn("inline-flex min-h-11 items-center gap-2.5 text-[14.5px]", !draft.simId && "text-muted")}>
-                  <input type="checkbox" id="sale-deduct-sim" data-field="deductSim" checked={draft.deductSim} disabled={!draft.simId}
-                    onChange={(e) => set("deductSim", e.target.checked, "deductSim")} className="size-4 accent-brand" />
-                  Deduct this SIM card from inventory
-                  {draft.simId && <span className="text-[13px] text-muted">(in stock: {stockOf("SIM Card", draft.simId).quantity})</span>}
-                </label>
-                {errors.deductSim && <p id="sale-deduct-sim-err" className="text-[13px] text-[#C62828]">{errors.deductSim}</p>}
-              </div>
+              {old ? (
+                <p className="text-[13.5px] text-muted sm:col-span-2">Old sale: nothing is taken out of inventory.</p>
+              ) : hosting ? (
+                <div className="flex flex-col gap-1 sm:col-span-2">
+                  <label className={cn("inline-flex min-h-11 items-center gap-2.5 text-[14.5px]", !draft.simId && "text-muted")}>
+                    <input type="checkbox" id="sale-deduct-sim" data-field="deductSim" checked={draft.deductSim} disabled={!draft.simId}
+                      onChange={(e) => set("deductSim", e.target.checked, "sim")} className="size-4 accent-brand" />
+                    Deduct this SIM card from inventory
+                    {draft.simId && <span className="text-[13px] text-muted">(in stock: {stockOf("SIM Card", draft.simId).quantity})</span>}
+                  </label>
+                  <p className="text-[13px] text-muted">Untick if the customer brings their own SIM card. The platform licence deduction is always taken from stock.</p>
+                </div>
+              ) : (
+                <p className="text-[13.5px] text-muted sm:col-span-2">This SIM card, the tracker and the platform licence deduction are taken out of inventory when the sale is completed.</p>
+              )}
+              {chosenSim && isIotSim(chosenSim.type) && (old || draft.deductSim || !hosting ? (
+                <p className="rounded-xl bg-tint px-3.5 py-3 text-[14px] text-navy sm:col-span-2">
+                  This is an IoT SIM ({chosenSim.type}){old ? "" : " from stock"}. It will be added to <span className="font-semibold">Billing → IoT SIM</span> automatically when the sale is {old ? "recorded" : "completed"}.
+                </p>
+              ) : (
+                <p className="rounded-xl bg-canvas px-3.5 py-3 text-[14px] text-muted sm:col-span-2">
+                  Not deducted from inventory, so this IoT SIM will not be added to Billing → IoT SIM. Tick &quot;Deduct this SIM card from inventory&quot; to bill it.
+                </p>
+              ))}
+              {chosenSim && airtimeAllowed(kind, chosenSim.type) && (
+                <div className="flex flex-col gap-1 rounded-xl bg-canvas p-3.5 sm:col-span-2">
+                  <p id="sale-sim-service-label" className="text-[13.5px] font-semibold">Airtime service (choose one)</p>
+                  <div role="radiogroup" aria-labelledby="sale-sim-service-label" data-field="simService" className="flex flex-col">
+                    {([
+                      ["none", "None", ""],
+                      ["sms", "Send the customer a monthly airtime alert (SMS)", "Bulk SMS — coming soon"],
+                      ["recharge", "Add to automatic airtime recharge", "Airtime — coming soon"],
+                    ] as const).map(([v, label, tag]) => {
+                      const current = draft.smsReminder ? "sms" : draft.autoRecharge ? "recharge" : "none";
+                      return (
+                        <label key={v} className="inline-flex min-h-11 items-center gap-2.5 text-[14.5px]">
+                          <input type="radio" name="sale-sim-service" value={v} checked={current === v}
+                            onChange={() => { setDraft((x) => ({ ...x, smsReminder: v === "sms", autoRecharge: v === "recharge" })); clear("simService"); }}
+                            className="size-4 accent-brand" />
+                          {label}
+                          {tag && <span className="rounded-full bg-white px-2 py-0.5 text-[12px] text-muted">{tag}</span>}
+                        </label>
+                      );
+                    })}
+                  </div>
+                  {errors.simService && <p className="text-[13px] text-[#C62828]">{errors.simService}</p>}
+                  <p className="text-[13px] text-muted">Your choice is saved with the sale and will be used once these services are connected.</p>
+                </div>
+              )}
             </fieldset>
           </FormSection>
 
-          <FormSection n={5} title="Technician and expenses">
+          <FormSection n={5} title={old ? "Technician" : "Technician and expenses"}>
             <div className="grid gap-4 sm:grid-cols-2">
               <SelectField id="sale-technician" name="technician" placeholder="None" label="Technician (optional)" value={draft.technicianId} error={errors.technician} className="sm:col-span-2"
-                options={sampleTechnicians.map((t) => ({ value: t.id, label: `${t.name} (${t.location})` }))} onChange={(v) => set("technicianId", v, "technician")} />
-              {(["installation", "transport", "commission"] as const).map((k) => (
+                options={technicians.map((t) => ({ value: t.id, label: `${t.name} (${t.location})` }))} onChange={(v) => set("technicianId", v, "technician")} />
+              {!old && (["installation", "transport", "commission"] as const).map((k) => (
                 <TextField key={k} id={`sale-${k}`} name={k} label={`${k[0].toUpperCase()}${k.slice(1)} (KES)`} value={draft[k]} inputMode="decimal"
                   placeholder="0.00" error={errors[k]} onChange={(v) => set(k, sanitizeNumberInput(v), k)} onBlur={() => blur(k, draft[k].trim().length > 0)} />
               ))}
             </div>
 
-            <div className="flex flex-col gap-3">
+            {!old && <div className="flex flex-col gap-3">
               <h3 className="text-[14px] font-semibold">Other expenses</h3>
               {draft.otherExpenses.map((row) => (
                 <div key={row.key} className="grid items-start gap-3 sm:grid-cols-[1fr_200px_auto]">
@@ -454,10 +645,10 @@ export function PackageSaleForm({ kind = "Package Sale" }: { kind?: "Package Sal
                   Add expense
                 </button>
               </div>
-            </div>
+            </div>}
           </FormSection>
 
-          <FormSection n={6} title="Payment">
+          {!old && <FormSection n={6} title="Payment">
             <p className="rounded-xl bg-canvas px-4 py-3 text-[14px] text-muted">
               <span className="font-semibold text-ink">Pricing rule:</span> the sale total is the package price you enter. {hosting ? "The platform licence and SIM card" : "The tracker, platform licence and SIM card"}
               {" "}are included in the package and are not charged again. Installation, transport, commission and other expenses are costs of the sale; they are recorded
@@ -502,9 +693,9 @@ export function PackageSaleForm({ kind = "Package Sale" }: { kind?: "Package Sal
                 </output>
               </Field>
             </div>
-          </FormSection>
+          </FormSection>}
 
-          <FormSection n={7} title="Notes">
+          <FormSection n={old ? 6 : 7} title="Notes">
             <Field id="sale-notes" label="Notes (optional)" error={errors.notes}>
               <textarea id="sale-notes" data-field="notes" rows={3} spellCheck={false} placeholder="Optional notes" value={draft.notes}
                 onChange={(e) => set("notes", sanitizeNotes(e.target.value), "notes")} onBlur={() => blur("notes", draft.notes.length > 0)}
@@ -515,13 +706,35 @@ export function PackageSaleForm({ kind = "Package Sale" }: { kind?: "Package Sal
           </FormSection>
         </fieldset>
 
+        {formError && <p role="alert" className="text-[14px] text-[#C62828]">{formError}</p>}
         <div className="flex justify-end">
-          <button type="submit" disabled={!verified}
+          <button type="submit" disabled={!verified || busy}
             className="min-h-12 rounded-xl bg-brand px-8 text-[16px] font-semibold text-white hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-50">
-            Complete Sale
+            {busy ? (old ? "Saving…" : "Completing…") : old ? "Record Old Sale" : "Complete Sale"}
           </button>
         </div>
       </form>
+
+      {!hosting && (
+        <>
+          <DeviceCustomerPrompt open={promptOpen} contact={deviceContact} onAddNew={addNewCustomer} onChooseExisting={chooseExisting} onClose={() => setPromptOpen(false)} />
+          <AddCustomerDialog
+            open={addOpen}
+            onClose={() => setAddOpen(false)}
+            brands={brands}
+            initial={addInitial}
+            onAdd={async (type, values) => {
+              const r = await crmApi.customers.create(type, values);
+              if (!r.ok) return r;
+              setAdded((list) => [r.data, ...list]);
+              setDraft((d) => ({ ...d, customerId: r.data.id, customerLink: "manual" }));
+              setMatch({ kind: "created", name: r.data.name });
+              clear("customer");
+              return { ok: true };
+            }}
+          />
+        </>
+      )}
     </div>
   );
 }

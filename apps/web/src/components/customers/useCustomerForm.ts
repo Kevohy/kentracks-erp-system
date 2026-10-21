@@ -23,7 +23,9 @@ export function useCustomerForm(dialogRef: RefObject<HTMLDialogElement | null>) 
   function blur(name: FieldName) {
     const raw = values[name] ?? "";
     if (!raw) return;
-    setErrors((p) => ({ ...p, [name]: validateField(name, raw).error }));
+    // Keep an error the server reported (e.g. a duplicate account) until the user edits the field.
+    const error = validateField(name, raw).error;
+    setErrors((p) => ({ ...p, [name]: error ?? p[name] }));
   }
 
   /** Returns the cleaned values, or null when something is invalid (and focuses the first bad field). */
@@ -36,8 +38,11 @@ export function useCustomerForm(dialogRef: RefObject<HTMLDialogElement | null>) 
       if (r.error) next[f.name] = r.error;
       clean[f.name] = r.value;
     }
+    const brand = validateField("brandId", values.brandId ?? "");
+    if (brand.error) next.brandId = brand.error;
+    clean.brandId = brand.value;
     setErrors(next);
-    const first = fields.find((f) => next[f.name]);
+    const first = next.brandId ? { name: "brandId" as const } : fields.find((f) => next[f.name]);
     if (first) {
       dialogRef.current?.querySelector<HTMLInputElement>(`[name="${first.name}"]`)?.focus();
       return null;
@@ -45,5 +50,13 @@ export function useCustomerForm(dialogRef: RefObject<HTMLDialogElement | null>) 
     return clean;
   }
 
-  return { values, errors, reset, change, blur, validate };
+  /** Shows errors the server reported against form fields (e.g. a duplicate account) and focuses the first. */
+  function applyServerErrors(fieldErrors: Record<string, string>) {
+    const known = Object.fromEntries(Object.entries(fieldErrors).filter(([k]) => k in values || k === "account")) as Values;
+    setErrors(known);
+    const first = Object.keys(known)[0];
+    if (first) dialogRef.current?.querySelector<HTMLInputElement>(`[name="${first}"]`)?.focus();
+  }
+
+  return { values, errors, reset, change, blur, validate, applyServerErrors };
 }

@@ -1,0 +1,3 @@
+CREATE INDEX "sales_tenant_created_id_idx" ON "sales" USING btree ("tenant_id","created_at" DESC NULLS LAST,"id" DESC NULLS LAST);--> statement-breakpoint
+CREATE INDEX "sales_tenant_type_created_id_idx" ON "sales" USING btree ("tenant_id","type","created_at" DESC NULLS LAST,"id" DESC NULLS LAST);--> statement-breakpoint
+CREATE INDEX "stock_adjustments_sale_idx" ON "stock_adjustments" USING btree ("sale_id");

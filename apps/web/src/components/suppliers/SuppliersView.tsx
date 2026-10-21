@@ -5,7 +5,9 @@ import { Plus } from "lucide-react";
 import { PageHeader } from "@/components/shell/PageHeader";
 import { Card } from "@/components/dashboard/Card";
 import { cn } from "@/lib/cn";
-import { sampleSuppliers, type Supplier, type SupplierType } from "@/lib/suppliers";
+import { crmApi } from "@/lib/crm-api";
+import type { SupplierType } from "@/lib/suppliers";
+import { ListStatusRow, useCrmList } from "@/components/crm/useCrmList";
 import { AddSupplierDialog } from "./AddSupplierDialog";
 
 const typeStyle: Record<SupplierType, string> = {
@@ -16,7 +18,8 @@ const typeStyle: Record<SupplierType, string> = {
 const columns = ["Supplier Type", "Supplier Name / Company Name", "Contact Person", "Phone Number", "Email", "Location"];
 
 export function SuppliersView() {
-  const [suppliers, setSuppliers] = useState<Supplier[]>(sampleSuppliers);
+  const { state, retry, prepend } = useCrmList(crmApi.suppliers.list);
+  const suppliers = state.status === "ready" ? state.items : [];
   const [open, setOpen] = useState(false);
 
   return (
@@ -37,8 +40,8 @@ export function SuppliersView() {
 
       <Card className="overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[900px] border-collapse text-left text-[14.5px]">
-            <caption className="sr-only">Suppliers (sample data)</caption>
+          <table className="stack-table w-full min-w-[900px] border-collapse text-left text-[14.5px]">
+            <caption className="sr-only">Suppliers</caption>
             <thead>
               <tr className="border-b border-line text-[13px] text-muted">
                 {columns.map((h) => (
@@ -49,6 +52,7 @@ export function SuppliersView() {
               </tr>
             </thead>
             <tbody>
+              <ListStatusRow state={state} colSpan={6} empty="No suppliers yet. Use Add Supplier to create the first one." retry={retry} />
               {suppliers.map((s) => (
                 <tr key={s.id} className="border-b border-line last:border-b-0">
                   <td className="px-4 py-3.5 pl-6">
@@ -70,7 +74,15 @@ export function SuppliersView() {
         </div>
       </Card>
 
-      <AddSupplierDialog open={open} onClose={() => setOpen(false)} onAdd={(s) => setSuppliers((prev) => [s, ...prev])} />
+      <AddSupplierDialog
+        open={open}
+        onClose={() => setOpen(false)}
+        onAdd={async (type: SupplierType, values) => {
+          const r = await crmApi.suppliers.create(type, values);
+          if (r.ok) prepend(r.data);
+          return r.ok ? { ok: true } : r;
+        }}
+      />
     </>
   );
 }

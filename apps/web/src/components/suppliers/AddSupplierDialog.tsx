@@ -3,11 +3,10 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { X } from "lucide-react";
 import { cn } from "@/lib/cn";
+import type { SaveResult } from "@/lib/crm-api";
 import {
-  fromSupplierValues,
   supplierFields,
   supplierTypes,
-  type Supplier,
   type SupplierFieldDef,
   type SupplierFieldName,
   type SupplierType,
@@ -23,12 +22,15 @@ export function AddSupplierDialog({
 }: {
   open: boolean;
   onClose: () => void;
-  onAdd: (supplier: Supplier) => void;
+  onAdd: (type: SupplierType, values: Values) => Promise<SaveResult>;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
   const [type, setType] = useState<SupplierType>("Individual");
   const [values, setValues] = useState<Values>({});
   const [errors, setErrors] = useState<Values>({});
+  const saving = useRef(false);
+  const [busy, setBusy] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
 
   useEffect(() => {
     const d = ref.current;
@@ -37,6 +39,7 @@ export function AddSupplierDialog({
       setType("Individual");
       setValues({});
       setErrors({});
+      setFormError(null);
       d.showModal();
     } else if (!open && d.open) {
       d.close();
@@ -58,8 +61,9 @@ export function AddSupplierDialog({
     setErrors((p) => ({ ...p, [name]: validateSupplierField(name, raw).error }));
   }
 
-  function submit(e: FormEvent) {
+  async function submit(e: FormEvent) {
     e.preventDefault();
+    if (saving.current) return; // a second click or Enter while saving must not create a duplicate
     const next: Values = {};
     const clean: Values = {};
     for (const f of fields) {
@@ -73,8 +77,16 @@ export function AddSupplierDialog({
       ref.current?.querySelector<HTMLInputElement>(`[name="${first.name}"]`)?.focus();
       return;
     }
-    onAdd(fromSupplierValues(`new-${Date.now()}`, type, clean));
-    onClose();
+    saving.current = true;
+    setBusy(true);
+    setFormError(null);
+    const r = await onAdd(type, clean);
+    saving.current = false;
+    setBusy(false);
+    if (r.ok) return onClose();
+    const known = Object.fromEntries(Object.entries(r.fieldErrors).filter(([k]) => fields.some((f) => f.name === k))) as Values;
+    setErrors(known);
+    setFormError(Object.keys(known).length ? null : r.message);
   }
 
   function renderField(f: SupplierFieldDef) {
@@ -171,6 +183,11 @@ export function AddSupplierDialog({
               <div className="grid gap-4 sm:grid-cols-2">{contact.map(renderField)}</div>
             </fieldset>
           )}
+          {formError && (
+            <p role="alert" className="text-[13.5px] text-[#C62828]">
+              {formError}
+            </p>
+          )}
         </div>
 
         <div className="flex justify-end gap-3 border-t border-line px-5 py-4 sm:px-6">
@@ -182,8 +199,8 @@ export function AddSupplierDialog({
           >
             Cancel
           </button>
-          <button key="save" type="submit" className="min-h-11 rounded-xl bg-brand px-5 text-[15px] font-semibold text-white hover:brightness-95">
-            Save Supplier
+          <button key="save" type="submit" disabled={busy} className="min-h-11 rounded-xl bg-brand px-5 text-[15px] font-semibold text-white hover:brightness-95 disabled:opacity-60">
+            {busy ? "Saving…" : "Save Supplier"}
           </button>
         </div>
       </form>

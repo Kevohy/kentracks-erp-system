@@ -15,6 +15,9 @@ export type Customer = {
   lastName?: string;
   /** Companies only. */
   pin?: string;
+  /** The brand this customer belongs to (Settings → Brands); not set for customers added before brands existed. */
+  brandId?: string;
+  brandName?: string;
 };
 
 export type FieldName =
@@ -25,7 +28,8 @@ export type FieldName =
   | "phone"
   | "email"
   | "pin"
-  | "location";
+  | "location"
+  | "brandId";
 
 export type FieldDef = {
   name: FieldName;
@@ -64,22 +68,11 @@ export const fieldsByType: Record<CustomerType, FieldDef[]> = {
   ],
 };
 
-/** Placeholder rows to demonstrate the list. Not real data. */
-export const sampleCustomers: Customer[] = [
-  { id: "c1", type: "Company", name: "Savanna Logistics Ltd", account: "ACC-3001", phone: "+254700000101", email: "accounts@savanna-logistics.example", location: "Industrial Area, Nairobi", pin: "P000000001A" },
-  { id: "c2", type: "End User", name: "Wanjiru Mwangi", account: "ACC-1001", phone: "+254700000102", email: "wanjiru.mwangi@example.com", location: "Kilimani, Nairobi" },
-  { id: "c3", type: "Distributor", name: "Otieno Ochieng", account: "ACC-2001", phone: "+254700000103", email: "otieno.ochieng@example.com", location: "Kisumu" },
-  { id: "c4", type: "Company", name: "Rift Valley Haulage Ltd", account: "ACC-3002", phone: "+254700000104", email: "info@riftvalley-haulage.example", location: "Nakuru", pin: "P000000002B" },
-  { id: "c5", type: "End User", name: "Brian Kiptoo", account: "ACC-1002", phone: "+254700000105", email: "brian.kiptoo@example.com", location: "Eldoret" },
-  { id: "c6", type: "Distributor", name: "Fatuma Hassan", account: "ACC-2002", phone: "+254700000106", email: "fatuma.hassan@example.com", location: "Mombasa" },
-  { id: "c7", type: "Company", name: "Lakeview Transport", account: "ACC-3003", phone: "+254700000107", email: "office@lakeview-transport.example", location: "Kisumu", pin: "P000000003C" },
-  { id: "c8", type: "End User", name: "Grace Njeri", account: "ACC-1003", phone: "+254700000108", email: "grace.njeri@example.com", location: "Thika" },
-];
 
 /** Current values of a customer as form field values. */
 export function toFormValues(c: Customer): Partial<Record<FieldName, string>> {
   if (c.type === "Company") {
-    return { companyName: c.name, account: c.account, phone: c.phone, email: c.email, pin: c.pin ?? "", location: c.location };
+    return { companyName: c.name, account: c.account, phone: c.phone, email: c.email, pin: c.pin ?? "", location: c.location, brandId: c.brandId ?? "" };
   }
   const [first, ...rest] = c.name.split(" ");
   return {
@@ -89,6 +82,7 @@ export function toFormValues(c: Customer): Partial<Record<FieldName, string>> {
     phone: c.phone,
     email: c.email,
     location: c.location,
+    brandId: c.brandId ?? "",
   };
 }
 
