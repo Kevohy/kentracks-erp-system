@@ -9,7 +9,8 @@ import { readSessionToken, validateSession, SESSION_COOKIE } from "@/server/auth
  *    the company from it, so this is a second layer, not the only one)
  * The login/logout endpoints and the two public pages are the only things reachable while signed out.
  */
-const PUBLIC_API = ["/api/auth/login", "/api/auth/logout"];
+// /api/health only says whether the app and its database answer (for Dokploy / uptime checks); it shows no data.
+const PUBLIC_API = ["/api/auth/login", "/api/auth/logout", "/api/health"];
 
 export async function proxy(req: NextRequest) {
   const { pathname, search } = req.nextUrl;
