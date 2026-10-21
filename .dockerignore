@@ -1,0 +1,13 @@
+# Keep the build context small and free of secrets.
+.git
+**/node_modules
+**/.next
+**/.env
+**/.env.*
+!**/.env.example
+**/*.log
+**/.DS_Store
+**/coverage
+**/*.tsbuildinfo
+apps/web/tests
+Claude outputs
