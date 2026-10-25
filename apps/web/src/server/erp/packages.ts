@@ -2,7 +2,7 @@ import "server-only";
 import { and, asc, eq } from "drizzle-orm";
 import type { SalePackage } from "@/lib/sales";
 import { validatePackage } from "@/lib/sale-validation";
-import type { AuthContext } from "../crm/auth";
+import { requireAdmin, type AuthContext } from "../crm/auth";
 import { getDb } from "../crm/db";
 import { uniqueViolation } from "../crm/http";
 import { Reader, throwValidation, type Body } from "./body";
@@ -28,6 +28,7 @@ function readName(body: Body): string {
 }
 
 export async function createPackage(ctx: AuthContext, body: Body): Promise<SalePackage> {
+  requireAdmin(ctx, "add or rename packages");
   const raw = readName(body);
   const db = getDb();
   const { errors, name } = validatePackage({ name: raw }, await loadPackages(db, ctx.tenantId));
@@ -43,6 +44,7 @@ export async function createPackage(ctx: AuthContext, body: Body): Promise<SaleP
 
 /** Renames a package. Past sales keep the name they were made with. */
 export async function updatePackage(ctx: AuthContext, id: string, body: Body): Promise<SalePackage | null> {
+  requireAdmin(ctx, "add or rename packages");
   const raw = readName(body);
   const db = getDb();
   const all = await loadPackages(db, ctx.tenantId);

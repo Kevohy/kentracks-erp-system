@@ -54,10 +54,16 @@ export type PackageSale = {
     name: string;
     number: string;
     deducted: boolean;
-    /** Prepaid SIMs only: send the customer a monthly SMS reminder (bulk SMS, connected later). */
+    /** Send the customer a monthly airtime SMS reminder (Bulk SMS). */
     smsReminder: boolean;
-    /** Prepaid SIMs only: add the SIM to automatic airtime recharge (connected later). */
+    /** Automatic airtime recharge (Communication → Airtime, after approval). */
     autoRecharge: boolean;
+    /** Changes of the airtime service after the sale, newest first. */
+    serviceChanges: SimServiceChange[];
+    /** Automatic airtime only: where the line stands in Communication → Airtime. */
+    airtimeStatus: AirtimeLineStatus | null;
+    /** SMS reminder only: this month's reminder and the latest ones sent. */
+    reminder: SmsReminderInfo | null;
     /** IoT SIMs (Local or International) are added to Billing → IoT SIM automatically (billing comes later). */
     iotBilling: boolean;
   };
@@ -171,3 +177,34 @@ export function matchCustomer(
   const both = byPhone.some((c) => c.id === customer.id) && byEmail.some((c) => c.id === customer.id);
   return { status: "matched", customer, by: both ? "phone and email" : byPhone.length ? "phone" : "email" };
 }
+
+/** The airtime service chosen for a sold tracker SIM. */
+export type SimService = "None" | "SMS reminder" | "Automatic airtime recharge";
+export const SIM_SERVICES: readonly SimService[] = ["None", "SMS reminder", "Automatic airtime recharge"];
+export const simServiceOf = (smsReminder: boolean, autoRecharge: boolean): SimService =>
+  autoRecharge ? "Automatic airtime recharge" : smsReminder ? "SMS reminder" : "None";
+
+export type SimServiceChange = {
+  /** Service: the service changed. Suspended / Resumed: automatic airtime paused or restarted. */
+  kind: "Service" | "Suspended" | "Resumed";
+  from: SimService;
+  to: SimService;
+  reason: string;
+  at: string;
+  by: string | null;
+  sms: { status: "Sent" | "Failed"; error: string | null } | null;
+};
+
+/** Automatic airtime state of a sold SIM, as shown in Sales and Billing. */
+export type AirtimeLineStatus = "Waiting for approval" | "Active" | "Suspended" | "Suspended (device expired)";
+
+/**
+ * SMS reminder service only: the monthly airtime reminder (Communication → Bulk SMS → Reminders), as shown in Sales
+ * and Billing. Due: no reminder yet this month. `recent` is the latest reminders, newest first.
+ */
+export type SmsReminderInfo = {
+  status: "Due" | "Sent this month";
+  recent: { at: string; status: "Pending" | "Scheduled" | "Sent" | "Delivered" | "Failed" | "Unknown" }[];
+  /** How many reminders this line has been sent in total. */
+  total: number;
+};

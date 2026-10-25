@@ -22,6 +22,11 @@ export const users = pgTable(
     passwordHash: text("password_hash").notNull(),
     /** A disabled user cannot sign in and every session of theirs stops working immediately. */
     isActive: boolean("is_active").notNull().default(true),
+    /**
+     * admin: everything. staff: day-to-day work, but not Settings, GPS platform logins, or anything that spends money
+     * (sending airtime or SMS, approving airtime). Users that existed before roles were added became admins.
+     */
+    role: text("role").notNull().default("staff"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
     lastLoginAt: timestamp("last_login_at", { withTimezone: true }),
@@ -32,6 +37,7 @@ export const users = pgTable(
     check("users_email_format", sql`${t.email} = lower(${t.email}) AND ${t.email} ~ '^[^[:space:]@]+@[^[:space:]@]+[.][^[:space:]@]{2,}$' AND char_length(${t.email}) <= 254`),
     check("users_name_length", sql`char_length(${t.fullName}) BETWEEN 1 AND 120`),
     check("users_hash_format", sql`${t.passwordHash} LIKE 'scrypt$%'`),
+    check("users_role", sql`${t.role} IN ('admin', 'staff')`),
   ],
 );
 

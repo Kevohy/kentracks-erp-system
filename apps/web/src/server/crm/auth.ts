@@ -2,7 +2,7 @@ import "server-only";
 import { readSessionToken, validateSession } from "../auth/session";
 import { ApiError } from "./http";
 
-export type AuthContext = { tenantId: string; userId: string };
+export type AuthContext = { tenantId: string; userId: string; role?: "admin" | "staff" };
 
 /**
  * The single place that decides who is calling and which company they belong to.
@@ -12,5 +12,13 @@ export type AuthContext = { tenantId: string; userId: string };
 export async function getAuthContext(req: Request): Promise<AuthContext> {
   const user = await validateSession(readSessionToken(req.headers));
   if (!user) throw new ApiError(401, "Not authenticated");
-  return { tenantId: user.tenantId, userId: user.userId };
+  return { tenantId: user.tenantId, userId: user.userId, role: user.role };
+}
+
+/**
+ * Administrator-only actions: Settings, GPS platform logins, and anything that spends money (airtime, SMS).
+ * Staff get a clear 403. A context without a role (internal jobs) is not a signed-in staff member and is allowed.
+ */
+export function requireAdmin(ctx: AuthContext, what: string): void {
+  if (ctx.role === "staff") throw new ApiError(403, `Only an administrator can ${what}. Ask an administrator to do it, or to make you an administrator.`);
 }

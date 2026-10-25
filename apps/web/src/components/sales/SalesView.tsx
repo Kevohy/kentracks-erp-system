@@ -10,6 +10,7 @@ import { cn } from "@/lib/cn";
 import { erpApi } from "@/lib/erp-api";
 import type { Sale, SalesPage, SaleType } from "@/lib/sales";
 import { formatKes, formatSigned, paymentState } from "@/lib/sales-format";
+import { AirtimeStatusPill, SmsReminderPill } from "./SaleAirtimeService";
 import { SaleDetailsDialog, formatSaleDate } from "./SaleDetailsDialog";
 
 const oldSaleOf = (s: Sale) => s.type !== "Retailer Sale" && s.oldSale;
@@ -202,6 +203,8 @@ export function SalesView() {
                       {s.customerName}
                       <span className="mt-1 flex flex-wrap items-center gap-1.5 font-normal">
                         <span className={cn("rounded-full px-2 py-0.5 text-[12px] font-medium", typeStyle[s.type])}>{s.type}</span>
+                        {s.type !== "Retailer Sale" && s.sim.airtimeStatus && <AirtimeStatusPill status={s.sim.airtimeStatus} prefix />}
+                        {s.type !== "Retailer Sale" && s.sim.reminder && <SmsReminderPill status={s.sim.reminder.status} prefix />}
                         <span className="text-[12.5px] text-muted">{shortDate(s.createdAt)}</span>
                       </span>
                     </th>
@@ -263,6 +266,8 @@ export function SalesView() {
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
                       <span className={cn("rounded-full px-2 py-0.5 text-[12px] font-medium", typeStyle[s.type])}>{s.type}</span>
+                        {s.type !== "Retailer Sale" && s.sim.airtimeStatus && <AirtimeStatusPill status={s.sim.airtimeStatus} prefix />}
+                        {s.type !== "Retailer Sale" && s.sim.reminder && <SmsReminderPill status={s.sim.reminder.status} prefix />}
                       <span className="text-[12.5px] text-muted">{formatSaleDate(s.createdAt)}</span>
                     </div>
                     <p className="mt-1 break-words text-[16px] font-semibold">{s.customerName}</p>

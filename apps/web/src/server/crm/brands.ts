@@ -2,7 +2,7 @@ import "server-only";
 import { and, asc, eq } from "drizzle-orm";
 import { validateBrand } from "@/lib/brand-validation";
 import { defaultBrandNames, type Brand } from "@/lib/brands";
-import type { AuthContext } from "./auth";
+import { requireAdmin, type AuthContext } from "./auth";
 import { getDb } from "./db";
 import { ApiError, uniqueViolation } from "./http";
 import { brands } from "./schema";
@@ -43,6 +43,7 @@ function fail(errors: { name?: string }): never {
 }
 
 export async function createBrand(ctx: AuthContext, body: Record<string, unknown>): Promise<Brand> {
+  requireAdmin(ctx, "add or rename brands");
   const raw = readName(body);
   const db = getDb();
   const { errors, name } = validateBrand({ name: raw }, await loadBrands(db, ctx.tenantId));
@@ -58,6 +59,7 @@ export async function createBrand(ctx: AuthContext, body: Record<string, unknown
 
 /** Renames a brand. Customers tagged with it follow the new name. */
 export async function updateBrand(ctx: AuthContext, id: string, body: Record<string, unknown>): Promise<Brand | null> {
+  requireAdmin(ctx, "add or rename brands");
   const raw = readName(body);
   const db = getDb();
   const all = await loadBrands(db, ctx.tenantId);

@@ -1,7 +1,7 @@
 import "server-only";
 import { and, asc, desc, eq, inArray, or, sql } from "drizzle-orm";
 import type { Customer } from "@/lib/customers";
-import { matchCustomer, saleTypes, type PackageSale, type RetailerSale, type Sale, type SalesPage, type StockTaken } from "@/lib/sales";
+import { matchCustomer, saleTypes, type PackageSale, type RetailerSale, type Sale, type SalesPage, type AirtimeLineStatus, type SimService, type SimServiceChange, type StockTaken } from "@/lib/sales";
 import { validateEmail, validatePhone } from "@/lib/validation";
 import { normalizeDate, todayInNairobi } from "@/lib/billing";
 import { validatePackageSale, type PackageSaleDraft } from "@/lib/sale-validation";
@@ -17,6 +17,7 @@ import { Reader, throwValidation, type Body } from "./body";
 import { verifyImeiOnServer } from "./gps";
 import { loadCategories, loadPlatforms, loadProducts, loadSimCards, loadStock, stockLookup, type Db, type Tx } from "./inventory";
 import { loadPackages } from "./packages";
+import { smsReminderInfo } from "./sms-reminder-info";
 import { packageSaleExpenses, packageSales, platforms as platformsTable, products as productsTable, retailerCardLines, retailerProductLines, sales, simCards, stockAdjustments } from "./schema";
 
 const LIMIT = 2000;
@@ -53,6 +54,33 @@ async function buildSales(tenantId: string, rows: SaleRow[]): Promise<Sale[]> {
     .leftJoin(platformsTable, eq(platformsTable.id, stockAdjustments.platformId))
     .where(and(eq(stockAdjustments.tenantId, tenantId), inArray(stockAdjustments.saleId, ids)))
     .orderBy(asc(stockAdjustments.createdAt), asc(stockAdjustments.itemType), asc(stockAdjustments.id));
+  // Changes of the airtime service after the sale (newest first).
+  const changes = await db.execute<{ sale_id: string; kind: "Service" | "Suspended" | "Resumed"; from_service: SimService; to_service: SimService; reason: string; sms_status: "Sent" | "Failed" | null; sms_error: string | null; created_at: string | Date; by_name: string | null }>(sql`
+    SELECT ch.sale_id, ch.kind, ch.from_service, ch.to_service, ch.reason, ch.sms_status, ch.sms_error, ch.created_at, u.full_name AS by_name
+    FROM sale_service_changes ch LEFT JOIN users u ON u.id = ch.changed_by AND u.tenant_id = ch.tenant_id
+    WHERE ch.tenant_id = ${tenantId} AND ch.sale_id IN (${sql.join(ids.map((i) => sql`${i}::uuid`), sql`, `)})
+    ORDER BY ch.created_at DESC, ch.id DESC`);
+  const changesBySale = new Map<string, SimServiceChange[]>();
+  for (const c of changes.rows) {
+    const list = changesBySale.get(c.sale_id) ?? [];
+    list.push({ kind: c.kind, from: c.from_service, to: c.to_service, reason: c.reason, at: new Date(c.created_at).toISOString(), by: c.by_name, sms: c.sms_status ? { status: c.sms_status, error: c.sms_error } : null });
+    changesBySale.set(c.sale_id, list);
+  }
+  // Automatic airtime: approval and suspension of each line.
+  const plans = await db.execute<{ sale_id: string; suspended: boolean; suspended_reason: string | null }>(sql`
+    SELECT sale_id, suspended, suspended_reason FROM airtime_plans
+    WHERE tenant_id = ${tenantId} AND sale_id IN (${sql.join(ids.map((i) => sql`${i}::uuid`), sql`, `)})`);
+  const planBySale = new Map(plans.rows.map((p) => [p.sale_id, p]));
+  const airtimeStatusOf = (saleId: string, autoRecharge: boolean): AirtimeLineStatus | null => {
+    if (!autoRecharge) return null;
+    const p = planBySale.get(saleId);
+    if (!p) return "Waiting for approval";
+    if (!p.suspended) return "Active";
+    return p.suspended_reason === "Expired" ? "Suspended (device expired)" : "Suspended";
+  };
+  // SMS reminder: this month's monthly airtime reminder and the latest ones (from Bulk SMS history).
+  const reminderSales = details.filter((d) => d.smsReminder && !d.autoRecharge && !d.iotBilling).map((d) => d.saleId);
+  const reminders = await smsReminderInfo(tenantId, reminderSales);
   const takenBySale = new Map<string, StockTaken[]>();
   for (const t of taken) {
     const name = t.itemType === "Product" ? t.product : t.itemType === "SIM Card" ? (t.sim ? `${t.sim} ${t.simType}` : null) : t.platform;
@@ -102,7 +130,7 @@ async function buildSales(tenantId: string, rows: SaleRow[]): Promise<Sale[]> {
       packagePriceMinor: s.totalMinor,
       tracker: d.trackerProductId ? { categoryName: d.trackerCategoryName as string, productId: d.trackerProductId, model: d.trackerModel as string } : null,
       licence: { platformId: d.platformId, platformName: d.platformName, cardType: d.cardType, deduction: d.deduction, renewalFeeMinor: d.renewalFeeMinor, expirationDate: d.platformExpirationDate },
-      sim: { id: d.simCardId, name: d.simName, number: d.simNumber, deducted: d.simDeducted, smsReminder: d.smsReminder, autoRecharge: d.autoRecharge, iotBilling: d.iotBilling },
+      sim: { id: d.simCardId, name: d.simName, number: d.simNumber, deducted: d.simDeducted, smsReminder: d.smsReminder, autoRecharge: d.autoRecharge, iotBilling: d.iotBilling, serviceChanges: changesBySale.get(s.id) ?? [], airtimeStatus: airtimeStatusOf(s.id, d.autoRecharge), reminder: reminders.get(s.id) ?? null },
       technician: d.technicianId ? { id: d.technicianId, name: d.technicianName as string } : null,
       expensesMinor: { installation: d.installationMinor, transport: d.transportMinor, commission: d.commissionMinor, other },
       notes: d.notes,

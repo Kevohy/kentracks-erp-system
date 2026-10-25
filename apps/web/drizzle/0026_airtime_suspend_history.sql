@@ -1,0 +1,2 @@
+ALTER TABLE "sale_service_changes" ADD COLUMN "kind" text DEFAULT 'Service' NOT NULL;--> statement-breakpoint
+ALTER TABLE "sale_service_changes" ADD CONSTRAINT "sale_service_changes_kind" CHECK ("sale_service_changes"."kind" IN ('Service', 'Suspended', 'Resumed'));

@@ -9,6 +9,7 @@ import type { Sale } from "@/lib/sales";
 import type { SalePayments } from "@/lib/sale-payments";
 import { formatKes, formatSigned, paymentState } from "@/lib/sales-format";
 import { RecordPaymentForm, nairobiDay } from "./RecordPaymentForm";
+import { SaleAirtimeService } from "./SaleAirtimeService";
 
 const statusStyle = { "Paid in full": "bg-[#E6F4EA] text-[#1B5E20]", "Partly paid": "bg-[#FFF4E5] text-[#9a3300]", Unpaid: "bg-[#FDECEA] text-[#B71C1C]" } as const;
 
@@ -240,15 +241,13 @@ export function SaleDetailsDialog({
                     {pkg.tracker && <Item label="GPS tracker" value={pkg.tracker.model} />}
                     <Item label="Platform licence" value={`${pkg.licence.platformName} — ${pkg.licence.cardType}`} />
                     {pkg.licence.expirationDate && <Item label="Platform expiration date" value={pkg.licence.expirationDate} />}
-                    {pkg.licence.renewalFeeMinor != null && <Item label="Renewal fee" value={formatKes(pkg.licence.renewalFeeMinor)} />}
+                    {pkg.licence.renewalFeeMinor != null && <Item label="Platform renewal fee" value={formatKes(pkg.licence.renewalFeeMinor)} />}
                     <Item label="SIM card" value={`${pkg.sim.name}${pkg.sim.number ? ` — ${pkg.sim.number}` : ""}`} />
-                    {(pkg.sim.smsReminder || pkg.sim.autoRecharge) && (
-                      <Item label="Airtime service" value={pkg.sim.smsReminder ? "Monthly airtime alert (SMS)" : "Automatic airtime recharge"} />
-                    )}
                     {pkg.sim.iotBilling && <Item label="Billing" value="Billing → IoT SIM" />}
                     {pkg.notes && <div className="sm:col-span-2"><Item label="Notes" value={pkg.notes} /></div>}
                   </dl>
                 </Section>
+                <SaleAirtimeService key={pkg.id} sale={pkg} onUpdated={onUpdated} />
               </>
             )}
 

@@ -5,7 +5,8 @@ import { ApiError } from "../crm/http";
 import { BAD_CREDENTIALS, validateLogin } from "@/lib/auth-validation";
 import { dummyHash, hashPassword, needsRehash, verifyPassword } from "./password";
 import { beginAttempt, clearAttempts, clientIp, purgeOldAttempts } from "./rate-limit";
-import { createSession, purgeExpiredSessions } from "./session";
+import { deviceCookie, trustedDevice } from "./device";
+import { cookieIsSecure, createSession, purgeExpiredSessions } from "./session";
 import { users } from "./schema";
 
 export type LoginInput = { email: string; password: string; remember: boolean };
@@ -23,8 +24,9 @@ export function readLoginInput(body: Record<string, unknown>): LoginInput {
  * Checks the credentials against the users table and, only if they are right, creates a server-side session.
  * Returns the cookie value. Throws ApiError 401 (generic) or 429 (too many attempts).
  */
-export async function signIn(req: Request, input: LoginInput): Promise<{ token: string; user: { fullName: string; email: string } }> {
-  const attempt = await beginAttempt(input.email, clientIp(req));
+export async function signIn(req: Request, input: LoginInput): Promise<{ token: string; deviceCookie: string; user: { fullName: string; email: string } }> {
+  const device = await trustedDevice(req, input.email);
+  const attempt = await beginAttempt(input.email, clientIp(req), device);
   if (!attempt.allowed) {
     const minutes = Math.ceil(attempt.retryAfterSeconds / 60);
     throw new ApiError(429, `Too many sign-in attempts. Try again in ${minutes} minute${minutes === 1 ? "" : "s"}.`, undefined, attempt.retryAfterSeconds);
@@ -39,8 +41,10 @@ export async function signIn(req: Request, input: LoginInput): Promise<{ token: 
   const set: { lastLoginAt: Date; updatedAt: Date; passwordHash?: string } = { lastLoginAt: new Date(), updatedAt: new Date() };
   if (needsRehash(user.passwordHash)) set.passwordHash = await hashPassword(input.password);
   await db.update(users).set(set).where(eq(users.id, user.id));
+  // Remember this browser for this account, so guesses made elsewhere cannot lock it out (device.ts).
+  const remembered = deviceCookie(user.id, set.passwordHash ?? user.passwordHash, device, cookieIsSecure(req));
   const token = await createSession(user.id, input.remember, req.headers.get("user-agent"));
   // Housekeeping, off the request's critical path and never allowed to fail it.
   void Promise.all([purgeExpiredSessions(), purgeOldAttempts()]).catch(() => {});
-  return { token, user: { fullName: user.fullName, email: user.email } };
+  return { token, deviceCookie: remembered, user: { fullName: user.fullName, email: user.email } };
 }

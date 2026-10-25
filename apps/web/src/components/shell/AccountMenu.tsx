@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Building2, Loader2, LogOut } from "lucide-react";
 
-type Me = { fullName: string; email: string; company: string };
+type Me = { fullName: string; email: string; company: string; role?: "admin" | "staff" };
 
 const initialsOf = (name: string) =>
   name.split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]!.toUpperCase()).join("") || "?";
@@ -78,6 +78,13 @@ export function AccountMenu() {
               <Building2 size={14} aria-hidden="true" />
               <span className="truncate">{me?.company}</span>
             </div>
+            {me?.role && (
+              <div className="mt-1.5 text-[12.5px]">
+                <span className={me.role === "admin" ? "rounded-full bg-tint px-2 py-0.5 font-semibold text-navy" : "rounded-full bg-canvas px-2 py-0.5 font-semibold text-muted"}>
+                  {me.role === "admin" ? "Administrator" : "Staff"}
+                </span>
+              </div>
+            )}
           </div>
           <div className="my-1 border-t border-line" />
           <button

@@ -1,4 +1,5 @@
 import type { GpsStatus } from "./gps-platform";
+import type { SmsReminderInfo } from "./sales";
 
 /** Billing: every tracker sold through a Package Sale or Hosting Sale, grouped by customer. */
 
@@ -28,6 +29,13 @@ export type BillingVehicle = {
   checkedAt: string | null;
   saleId: string;
   soldAt: string;
+  /** The SIM's airtime service, and for automatic airtime its approval state. */
+  airtime: {
+    service: "None" | "SMS reminder" | "Automatic airtime recharge";
+    status: "Waiting for approval" | "Active" | "Suspended" | "Suspended (device expired)" | null;
+    /** SMS reminder only: this month's monthly airtime reminder and the latest one sent. */
+    reminder: SmsReminderInfo | null;
+  };
 };
 
 export type BillingCustomer = {

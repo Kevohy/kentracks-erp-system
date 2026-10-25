@@ -621,8 +621,8 @@ export function PackageSaleForm({ kind = "Package Sale" }: { kind?: "Package Sal
                   <div role="radiogroup" aria-labelledby="sale-sim-service-label" data-field="simService" className="flex flex-col">
                     {([
                       ["none", "None", ""],
-                      ["sms", "Send the customer a monthly airtime alert (SMS)", "Bulk SMS — coming soon"],
-                      ["recharge", "Add to automatic airtime recharge", "Airtime — coming soon"],
+                      ["sms", "Send the customer a monthly airtime alert (SMS)", "Monthly via Bulk SMS"],
+                      ["recharge", "Add to automatic airtime recharge", "Needs approval"],
                     ] as const).map(([v, label, tag]) => {
                       const current = draft.smsReminder ? "sms" : draft.autoRecharge ? "recharge" : "none";
                       return (
@@ -637,7 +637,7 @@ export function PackageSaleForm({ kind = "Package Sale" }: { kind?: "Package Sal
                     })}
                   </div>
                   {errors.simService && <p className="text-[13px] text-[#C62828]">{errors.simService}</p>}
-                  <p className="text-[13px] text-muted">Your choice is saved with the sale and will be used once these services are connected.</p>
+                  <p className="text-[13px] text-muted">Your choice is saved with the sale. The SMS alert lists the line in Communication → Bulk SMS → Reminders straight away. Automatic airtime starts once the line is approved in Communication → Airtime → Approval.</p>
                 </div>
               )}
             </fieldset>

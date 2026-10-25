@@ -18,7 +18,8 @@ export const SESSION_POLICY = {
 /** last_seen_at is refreshed at most this often, so reads do not turn into writes. */
 const TOUCH_EVERY_SECONDS = 300;
 
-export type SessionUser = { userId: string; tenantId: string; tenantName: string; email: string; fullName: string };
+export type UserRole = "admin" | "staff";
+export type SessionUser = { userId: string; tenantId: string; tenantName: string; email: string; fullName: string; role: UserRole };
 
 const sha256 = (v: string) => createHash("sha256").update(v).digest("hex");
 const TOKEN = /^[A-Za-z0-9_-]{43}$/;
@@ -65,6 +66,7 @@ export async function validateSession(token: string | null): Promise<SessionUser
       tenantName: tenants.name,
       email: users.email,
       fullName: users.fullName,
+      role: users.role,
       isActive: users.isActive,
     })
     .from(sessions)
@@ -82,7 +84,7 @@ export async function validateSession(token: string | null): Promise<SessionUser
   if (now - row.lastSeenAt.getTime() > TOUCH_EVERY_SECONDS * 1000) {
     await db.update(sessions).set({ lastSeenAt: new Date(now) }).where(eq(sessions.tokenHash, row.hash));
   }
-  return { userId: row.userId, tenantId: row.tenantId, tenantName: row.tenantName, email: row.email, fullName: row.fullName };
+  return { userId: row.userId, tenantId: row.tenantId, tenantName: row.tenantName, email: row.email, fullName: row.fullName, role: row.role === "admin" ? "admin" : "staff" };
 }
 
 export async function destroySession(token: string | null): Promise<void> {
@@ -97,10 +99,15 @@ export async function purgeExpiredSessions(): Promise<void> {
 
 const isLoopbackHost = (host: string) => /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/i.test(host);
 
+/** Cookies are Secure everywhere except plain-http localhost. */
+export function cookieIsSecure(req: Request): boolean {
+  const host = req.headers.get("x-forwarded-host") ?? req.headers.get("host") ?? "";
+  return !isLoopbackHost(host) || req.headers.get("x-forwarded-proto") === "https";
+}
+
 /** HttpOnly (JavaScript cannot read it), SameSite=Lax (not sent on cross-site requests), Secure everywhere except plain-http localhost. */
 export function sessionCookie(req: Request, token: string, remember: boolean): string {
-  const host = req.headers.get("x-forwarded-host") ?? req.headers.get("host") ?? "";
-  const secure = !isLoopbackHost(host) || req.headers.get("x-forwarded-proto") === "https";
+  const secure = cookieIsSecure(req);
   const parts = [`${SESSION_COOKIE}=${token}`, "Path=/", "HttpOnly", "SameSite=Lax"];
   if (secure) parts.push("Secure");
   if (remember) parts.push(`Max-Age=${SESSION_POLICY.remember.absoluteSeconds}`);
