@@ -211,6 +211,13 @@
       "when": 1792932224187,
       "tag": "0029_security_roles_encrypted_gps",
       "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1792956918911,
+      "tag": "0030_brand_profile",
+      "breakpoints": true
     }
   ]
 }
