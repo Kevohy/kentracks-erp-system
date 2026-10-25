@@ -4,10 +4,12 @@ import type { Purchase } from "./purchases";
 import type { PurchaseDraft } from "./purchase-validation";
 import type { RetailerDraft } from "./retailer-validation";
 import type { PackageSaleDraft } from "./sale-validation";
-import type { Sale, SalePackage, SalesPage } from "./sales";
+import type { Sale, SalePackage, SalesPage, SimService } from "./sales";
 import type { GpsAccountStatus, GpsPlatformInfo } from "./gps-platforms";
 import type { DashboardSummary } from "./dashboard";
+import type { AfricasTalkingStatus, AirtimeBatch, AirtimeLine, AirtimeMonthly, AirtimeOverview, AirtimePlanDraft } from "./airtime";
 import type { PaymentDraft, SalePayments } from "./sale-payments";
+import type { SmsAudience, SmsBatch, SmsCustomer, SmsKind, SmsOverview, SmsReminderLine, SmsReminderSettings, SmsTemplate, SmsTemplateDraft, TextSmsStatus } from "./sms";
 import type { VerifyOutcome } from "./gps-platform";
 
 import type { BillingCustomer, BillingFilter, BillingPage, BillingSyncResult } from "./billing";
@@ -19,6 +21,51 @@ export type { StockRow } from "./purchases";
 import type { StockRow } from "./purchases";
 
 export const erpApi = {
+  textSms: {
+    get: () => call<TextSmsStatus>("GET", "/api/settings/textsms"),
+  },
+  sms: {
+    overview: () => call<SmsOverview>("GET", "/api/sms/overview"),
+    customers: () => call<SmsCustomer[]>("GET", "/api/sms/customers"),
+    reminders: (type: "airtime" | "expiry") => call<SmsReminderLine[]>("GET", `/api/sms/reminders?type=${type}`),
+    /** `clientKey` makes a repeated submit return the same send instead of sending again. */
+    send: (draft: { kind: SmsAudience; ids?: string[]; phones?: string; message: string; templateName?: string; scheduleAt?: string; clientKey: string }) =>
+      call<SmsBatch>("POST", "/api/sms/send", draft),
+    history: (kind?: SmsKind) => call<SmsBatch[]>("GET", `/api/sms/history${kind ? `?kind=${kind}` : ""}`),
+    batch: (id: string) => call<SmsBatch>("GET", `/api/sms/batches/${encodeURIComponent(id)}`),
+    delivery: (id: string) => call<SmsBatch>("POST", `/api/sms/batches/${encodeURIComponent(id)}/delivery`, {}),
+    templates: () => call<SmsTemplate[]>("GET", "/api/sms/templates"),
+    createTemplate: (d: SmsTemplateDraft) => call<SmsTemplate>("POST", "/api/sms/templates", d),
+    updateTemplate: (id: string, d: SmsTemplateDraft) => call<SmsTemplate>("PUT", `/api/sms/templates/${encodeURIComponent(id)}`, d),
+    deleteTemplate: (id: string) => call<{ deleted: true }>("DELETE", `/api/sms/templates/${encodeURIComponent(id)}`),
+    reminderSettings: () => call<SmsReminderSettings>("GET", "/api/sms/reminder-settings"),
+    saveReminderSettings: (d: { enabled: boolean; message: string; sendHour: string }) => call<SmsReminderSettings>("PUT", "/api/sms/reminder-settings", d),
+    block: (customerId: string, blocked: boolean) => call<{ blocked: boolean }>("POST", `/api/sms/blocks/${encodeURIComponent(customerId)}`, { blocked }),
+    /** Send today's monthly airtime reminders now (what the automatic job does). */
+    runReminders: () => call<{ due: number; batch: SmsBatch | null; note: string; settings: SmsReminderSettings }>("POST", "/api/sms/reminders/run", {}),
+  },
+  africasTalking: {
+    get: () => call<AfricasTalkingStatus>("GET", "/api/settings/africastalking"),
+    test: () => call<{ ok: boolean; balance?: string; message?: string }>("POST", "/api/settings/africastalking/test"),
+  },
+  airtime: {
+    lines: () => call<AirtimeLine[]>("GET", "/api/airtime/lines"),
+    history: () => call<AirtimeBatch[]>("GET", "/api/airtime/history"),
+    /** `clientKey` makes a repeated submit return the same send instead of sending airtime again. */
+    send: (saleIds: string[], amount: string, clientKey: string) => call<AirtimeBatch>("POST", "/api/airtime/send", { saleIds, amount, clientKey }),
+    monthly: () => call<AirtimeMonthly>("GET", "/api/airtime/monthly"),
+    overview: () => call<AirtimeOverview>("GET", "/api/airtime/overview"),
+    suspend: (saleId: string, suspended: boolean) => call<AirtimeMonthly>("POST", `/api/airtime/plans/${encodeURIComponent(saleId)}/suspend`, { suspended }),
+    topUp: (phone: string, amount: string, clientKey: string) => call<AirtimeBatch>("POST", "/api/airtime/topup", { phone, amount, clientKey }),
+    remove: (saleId: string, next: "None" | "SMS reminder", notify: "sms" | "none", message: string) =>
+      call<{ monthly: AirtimeMonthly; sms: { status: "Sent" | "Failed"; error: string | null } | null }>("POST", `/api/airtime/plans/${encodeURIComponent(saleId)}/remove`, { next, notify, message }),
+    candidates: () => call<AirtimeLine[]>("GET", "/api/airtime/candidates"),
+    subscribe: (saleId: string, reason: string) => call<AirtimeMonthly>("POST", `/api/airtime/subscribe/${encodeURIComponent(saleId)}`, { reason }),
+    approve: (saleId: string, draft: AirtimePlanDraft) => call<AirtimeMonthly>("PUT", `/api/airtime/plans/${encodeURIComponent(saleId)}`, draft),
+    stop: (saleId: string) => call<AirtimeMonthly>("DELETE", `/api/airtime/plans/${encodeURIComponent(saleId)}`),
+    imeiExpiry: (saleId: string) => call<{ imeiExpiry: string | null; lifelong: boolean; message?: string }>("POST", `/api/airtime/plans/${encodeURIComponent(saleId)}/imei-expiry`, {}),
+    sendMonthly: (saleIds: string[], clientKey: string) => call<AirtimeBatch>("POST", "/api/airtime/send-monthly", { saleIds, clientKey }),
+  },
   dashboard: { get: () => call<DashboardSummary>("GET", "/api/dashboard") },
   gps: {
     /** Verify one IMEI on the server with the company's GPS platform accounts. */
@@ -67,6 +114,8 @@ export const erpApi = {
     /** `clientKey` makes a repeated submit of the same payment form return the saved payment instead of adding another. */
     recordPayment: (id: string, draft: PaymentDraft, clientKey: string) =>
       call<{ sale: Sale; payments: SalePayments }>("POST", `/api/sales/${id}/payments`, { ...draft, clientKey }),
+    /** Change the airtime service of a sold tracker SIM (logged in the sale's history). */
+    changeService: (id: string, service: SimService, reason: string) => call<Sale>("POST", `/api/sales/${id}/sim-service`, { service, reason }),
   },
   billing: {
     /** One page of customers with their tracked vehicles, plus totals. */

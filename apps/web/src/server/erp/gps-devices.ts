@@ -10,7 +10,7 @@ import {
   type VerifyOutcome,
 } from "@/lib/gps-platform";
 import { GPS_PLATFORMS } from "@/lib/gps-platforms";
-import { GpsAuthError, invalidateAccessToken, platformAccounts, platformName, tokenFor, type GpsCredentials } from "./gps-auth";
+import { GpsAuthError, gpsFetch, invalidateAccessToken, platformAccounts, platformName, tokenFor, type GpsCredentials } from "./gps-auth";
 
 /**
  * Device lookup on the GPS platforms. Kentracks (API section 2) and iTrack (API section 2.12) have the same
@@ -35,7 +35,8 @@ import { GpsAuthError, invalidateAccessToken, platformAccounts, platformName, to
  */
 
 export const KENTRACKS_BATCH = 100;
-const REQUEST_TIMEOUT_MS = 15_000;
+/** A batch of up to 100 IMEIs can take longer than a sign-in. */
+const DEVICE_TIMEOUT_MS = 15_000;
 
 type Found = Map<string, { rec: KentracksDeviceRecord; by: GpsCredentials }>;
 
@@ -48,7 +49,7 @@ async function ask(c: GpsCredentials, path: string, params: Record<string, strin
   for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
   let res: Response;
   try {
-    res = await fetch(url, { method: "GET", cache: "no-store", headers: { Accept: "application/json" }, signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
+    res = await gpsFetch(url, DEVICE_TIMEOUT_MS);
   } catch (e) {
     const timeout = e instanceof Error && (e.name === "TimeoutError" || e.name === "AbortError");
     // The URL holds the token, so it is never part of the message.

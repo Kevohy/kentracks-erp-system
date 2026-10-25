@@ -20,6 +20,8 @@ import { Reader, throwValidation, type Body } from "./body";
 import { parseMoney } from "@/lib/purchase-validation";
 import { MAX_AMOUNT_MINOR } from "@/lib/sale-validation";
 import { verifyImeisOnServer } from "./gps";
+import { smsReminderInfo } from "./sms-reminder-info";
+import type { SmsReminderInfo } from "@/lib/sales";
 
 const PAGE_MAX = 50;
 const SYNC_MAX_CUSTOMERS = 50;
@@ -78,12 +80,17 @@ type VehicleRow = {
   technician_name: string | null;
   gps_synced_at: string | Date | null;
   sold_at: string | Date;
+  sms_reminder: boolean;
+  auto_recharge: boolean;
+  ap_approved: boolean;
+  ap_suspended: boolean | null;
+  ap_reason: string | null;
 };
 
 const iso = (v: string | Date | null) => (v == null ? null : new Date(v).toISOString());
 const STATUSES: readonly string[] = ["Online", "Offline", "Expired"];
 
-function toVehicle(r: VehicleRow): BillingVehicle {
+function toVehicle(r: VehicleRow, reminders?: Map<string, SmsReminderInfo>): BillingVehicle {
   const soldAt = iso(r.sold_at)!;
   return {
     imei: r.imei,
@@ -106,6 +113,9 @@ function toVehicle(r: VehicleRow): BillingVehicle {
     checkedAt: iso(r.gps_synced_at),
     saleId: r.sale_id,
     soldAt,
+    airtime: r.auto_recharge
+      ? { service: "Automatic airtime recharge", status: !r.ap_approved ? "Waiting for approval" : r.ap_suspended ? (r.ap_reason === "Expired" ? "Suspended (device expired)" : "Suspended") : "Active", reminder: null }
+      : { service: r.sms_reminder ? "SMS reminder" : "None", status: null, reminder: (r.sms_reminder && reminders?.get(r.sale_id)) || null },
   };
 }
 
@@ -120,15 +130,18 @@ async function loadCustomers(tenantId: string, ids: string[]): Promise<BillingCu
       FROM customers c LEFT JOIN brands b ON b.id = c.brand_id
       WHERE c.tenant_id = ${tenantId} AND c.id IN (${idList})`),
     db.execute<VehicleRow>(sql`
-      SELECT v.*, v.expires::text AS expires_text, v.renewal_fee_minor::text AS renewal_text, sc.type::text AS sim_type
+      SELECT v.*, v.expires::text AS expires_text, v.renewal_fee_minor::text AS renewal_text, sc.type::text AS sim_type,
+             ap.sale_id IS NOT NULL AS ap_approved, ap.suspended AS ap_suspended, ap.suspended_reason AS ap_reason
       FROM (${billingDevices(tenantId)}) v LEFT JOIN sim_cards sc ON sc.id = v.sim_card_id
+      LEFT JOIN airtime_plans ap ON ap.sale_id = v.sale_id AND ap.tenant_id = ${tenantId}
       WHERE v.customer_id IN (${idList})
       ORDER BY v.vehicle_plate, v.imei`),
   ]);
   const byCustomer = new Map<string, BillingVehicle[]>();
+  const reminders = await smsReminderInfo(tenantId, veh.rows.filter((r) => r.sms_reminder && !r.auto_recharge).map((r) => r.sale_id));
   for (const r of veh.rows) {
     const list = byCustomer.get(r.customer_id) ?? [];
-    list.push(toVehicle(r));
+    list.push(toVehicle(r, reminders));
     byCustomer.set(r.customer_id, list);
   }
   const map = new Map(cust.rows.map((c) => [c.id, c]));

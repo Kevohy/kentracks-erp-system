@@ -145,7 +145,7 @@ function VehicleCard({ v, today, onViewSale, onCopy, onRefresh, refreshing, onEd
             </span>
           ) : dash}
         </Field>
-        <Field label="Renewal fee">
+        <Field label="Platform renewal fee">
           <span className="inline-flex max-w-full items-center gap-1">
             <span className="truncate">{v.renewalFeeMinor != null ? formatKes(v.renewalFeeMinor) : v.cardType === "Lifelong Card" ? <span className="font-normal text-muted">None</span> : <span className="font-normal text-muted">Not set</span>}</span>
             {onEditFee && (
@@ -155,6 +155,29 @@ function VehicleCard({ v, today, onViewSale, onCopy, onRefresh, refreshing, onEd
               </button>
             )}
           </span>
+        </Field>
+        <Field label="Airtime service" className="col-span-2 sm:col-span-3">
+          {v.airtime.service === "None" ? <span className="font-normal text-muted">None</span> : (
+            <span className="inline-flex flex-wrap items-center gap-1.5">
+              {v.airtime.service === "SMS reminder" ? "SMS reminder" : "Automatic airtime"}
+              {v.airtime.status && (
+                <span className={cn("rounded-full px-2 py-0.5 text-[11.5px] font-semibold",
+                  v.airtime.status === "Active" ? "bg-[#E6F4EA] text-[#1B5E20]"
+                    : v.airtime.status === "Suspended" ? "bg-[#EEF1F4] text-[#3d4b57]"
+                      : v.airtime.status === "Suspended (device expired)" ? "bg-[#FDECEA] text-[#B71C1C]" : "bg-[#FFF4E5] text-[#9a3300]")}>
+                  {v.airtime.status}
+                </span>
+              )}
+              {v.airtime.reminder && (
+                <span className={cn("rounded-full px-2 py-0.5 text-[11.5px] font-semibold", v.airtime.reminder.status === "Due" ? "bg-[#FFF1EA] text-brand" : "bg-[#E6F4EA] text-[#1B5E20]")}>
+                  {v.airtime.reminder.status === "Due" ? "Reminder due this month" : "Reminder sent this month"}
+                </span>
+              )}
+              {v.airtime.reminder?.recent[0] && (
+                <span className="text-[12px] font-normal text-muted">Last {longDate(new Date(Date.parse(v.airtime.reminder.recent[0].at) + 3 * 3_600_000).toISOString().slice(0, 10))}</span>
+              )}
+            </span>
+          )}
         </Field>
       </dl>
       <div className="flex items-center gap-2 border-t border-line px-3.5 py-1.5 text-[12px] text-muted">
@@ -574,7 +597,7 @@ export function BillingVehiclesView() {
       )}
 
       {flash && (
-        <div role="status" className="fixed bottom-5 left-1/2 z-30 -translate-x-1/2 rounded-xl bg-ink px-4 py-2.5 text-[14px] font-medium text-white shadow-lg">{flash}</div>
+        <div role="status" className="fixed bottom-[calc(84px+env(safe-area-inset-bottom))] left-1/2 z-40 -translate-x-1/2 rounded-xl bg-ink lg:bottom-5 px-4 py-2.5 text-[14px] font-medium text-white shadow-lg">{flash}</div>
       )}
       <SaleDetailsDialog sale={sale} onClose={() => setSale(null)} />
       <RenewalFeeDialog

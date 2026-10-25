@@ -11,8 +11,8 @@ export const POST = (req: Request) =>
     assertSameOrigin(req);
     const body = await readJsonObject(req, 4096);
     const input = readLoginInput(body);
-    const { token, user } = await signIn(req, input);
+    const { token, deviceCookie, user } = await signIn(req, input);
     // A new session replaces whatever cookie the browser arrived with.
     await destroySession(readSessionToken(req.headers));
-    return jsonWithCookies({ user, redirectTo: safeNextPath(body.next) }, 200, [sessionCookie(req, token, input.remember)]);
+    return jsonWithCookies({ user, redirectTo: safeNextPath(body.next) }, 200, [sessionCookie(req, token, input.remember), deviceCookie]);
   });

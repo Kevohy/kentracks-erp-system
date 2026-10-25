@@ -8,5 +8,5 @@ export const GET = (req: Request) =>
   handle(async () => {
     const user = await validateSession(readSessionToken(req.headers));
     if (!user) throw new ApiError(401, "Not authenticated");
-    return json({ fullName: user.fullName, email: user.email, company: user.tenantName });
+    return json({ fullName: user.fullName, email: user.email, company: user.tenantName, role: user.role });
   });

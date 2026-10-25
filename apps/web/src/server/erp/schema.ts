@@ -487,6 +487,7 @@ export const gpsPlatformAccounts = pgTable(
     tenantId: tenantId(),
     platform: text("platform").notNull(),
     account: text("account").notNull(),
+    /** md5(password), which the platform API accepts as the login: stored ENCRYPTED (src/server/secret-box.ts, "v1:…"). */
     passwordMd5: text("password_md5").notNull(),
     createdBy: uuid("created_by"),
     createdAt: createdAt(),
@@ -497,7 +498,244 @@ export const gpsPlatformAccounts = pgTable(
     index("gps_platform_accounts_tenant_idx").on(t.tenantId, t.platform, t.createdAt),
     check("gps_platform_accounts_platform", sql`${t.platform} IN ('kentracks', 'itrack')`),
     check("gps_platform_accounts_account", sql`char_length(${t.account}) BETWEEN 1 AND 64`),
-    check("gps_platform_accounts_md5", sql`${t.passwordMd5} ~ '^[0-9a-f]{32}$'`),
+    // Encrypted ("v1:…"), or a login saved before encryption existed (encrypted the next time it is read).
+    check("gps_platform_accounts_md5", sql`${t.passwordMd5} ~ '^[0-9a-f]{32}$' OR ${t.passwordMd5} ~ '^v1:[A-Za-z0-9_-]+:[A-Za-z0-9_-]+:[A-Za-z0-9_-]+$'`),
   ],
 );
 
+
+// ------------------------------------------------------------- Africa's Talking (airtime)
+
+/** One airtime send (Communication → Airtime): the same amount to one or more tracker SIM lines. */
+export const airtimeBatches = pgTable(
+  "airtime_batches",
+  {
+    id: id(),
+    tenantId: tenantId(),
+    /** Chosen by the browser per send, so a repeated submit returns the same send instead of sending again. */
+    clientKey: text("client_key").notNull(),
+    /** Manual: picked lines, one amount. Monthly: the approved lines due this month, each with its own amount. TopUp: one number typed in. */
+    kind: text("kind").notNull().default("Manual"),
+    /** The amount per line; null when a monthly send has lines with different amounts (see each item). */
+    amountMinor: money("amount_minor"),
+    recipients: integer("recipients").notNull(),
+    sent: integer("sent").notNull().default(0),
+    failed: integer("failed").notNull().default(0),
+    /** Africa's Talking totals as returned, e.g. "KES 1000.0000". */
+    totalAmount: text("total_amount"),
+    totalDiscount: text("total_discount"),
+    /** Set when the whole request was refused or could not be confirmed. */
+    error: text("error"),
+    createdBy: uuid("created_by"),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex("airtime_batches_tenant_client_key_uq").on(t.tenantId, t.clientKey),
+    index("airtime_batches_tenant_created_idx").on(t.tenantId, t.createdAt),
+    check("airtime_batches_amount", sql`(${t.amountMinor} IS NULL OR ${t.amountMinor} BETWEEN 500 AND 1000000) AND ${t.recipients} BETWEEN 1 AND 1000`),
+    check("airtime_batches_kind", sql`${t.kind} IN ('Manual', 'Monthly', 'TopUp')`),
+  ],
+);
+
+/** One SIM line of an airtime send and its result. */
+export const airtimeItems = pgTable(
+  "airtime_items",
+  {
+    id: id(),
+    tenantId: tenantId(),
+    batchId: uuid("batch_id").notNull().references(() => airtimeBatches.id, { onDelete: "cascade" }),
+    /** The device's sale (Package/Hosting Sale) the SIM line belongs to. */
+    saleId: uuid("sale_id").references(() => sales.id, { onDelete: "set null" }),
+    /** E.164, e.g. +254712345678. */
+    phone: text("phone").notNull(),
+    amountMinor: money("amount_minor").notNull(),
+    /** Pending until Africa's Talking answers; Unknown when the answer never came (check their dashboard). */
+    status: text("status").notNull(),
+    requestId: text("request_id"),
+    discount: text("discount"),
+    error: text("error"),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("airtime_items_batch_idx").on(t.batchId),
+    index("airtime_items_tenant_sale_idx").on(t.tenantId, t.saleId, t.updatedAt),
+    check("airtime_items_status", sql`${t.status} IN ('Pending', 'Sent', 'Failed', 'Unknown')`),
+  ],
+);
+
+/**
+ * Monthly airtime approved for a tracker SIM line (Communication → Airtime → Monthly). A sale ticked "automatic airtime
+ * recharge" waits for approval; approving sets the airtime per month, the renewal price and when the airtime stops:
+ * on the device's expiry date from the GPS platform (IMEI) or on a custom date.
+ */
+export const airtimePlans = pgTable(
+  "airtime_plans",
+  {
+    saleId: uuid("sale_id").primaryKey().references(() => sales.id, { onDelete: "cascade" }),
+    tenantId: tenantId(),
+    monthlyAmountMinor: money("monthly_amount_minor").notNull(),
+    renewalPriceMinor: money("renewal_price_minor").notNull(),
+    /** IMEI: the device's expiry date on the GPS platform (follows renewals). Custom: customExpiry. */
+    expirySource: text("expiry_source").notNull(),
+    customExpiry: date("custom_expiry"),
+    /** Suspended: no monthly airtime until resumed. */
+    suspended: boolean("suspended").notNull().default(false),
+    suspendedAt: timestamp("suspended_at", { withTimezone: true }),
+    /** Manual: suspended by a person. Expired: suspended automatically when the line reached its expiry date. */
+    suspendedReason: text("suspended_reason"),
+    approvedBy: uuid("approved_by"),
+    approvedAt: timestamp("approved_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("airtime_plans_tenant_idx").on(t.tenantId),
+    check("airtime_plans_amount", sql`${t.monthlyAmountMinor} BETWEEN 500 AND 1000000 AND ${t.renewalPriceMinor} >= 0`),
+    check("airtime_plans_suspended_reason", sql`${t.suspendedReason} IS NULL OR ${t.suspendedReason} IN ('Manual', 'Expired')`),
+    check("airtime_plans_expiry", sql`(${t.expirySource} = 'IMEI' AND ${t.customExpiry} IS NULL) OR (${t.expirySource} = 'Custom' AND ${t.customExpiry} IS NOT NULL)`),
+  ],
+);
+
+/**
+ * Every change of a sold SIM's airtime service (None / SMS reminder / Automatic airtime recharge) after the sale:
+ * shown in the sale's details so the previous choice is never lost. When airtime is removed and the customer was sent an
+ * SMS about it, the SMS result is kept here too.
+ */
+export const saleServiceChanges = pgTable(
+  "sale_service_changes",
+  {
+    id: id(),
+    tenantId: tenantId(),
+    saleId: uuid("sale_id").notNull().references(() => sales.id, { onDelete: "cascade" }),
+    /** Service: the service changed. Suspended / Resumed: automatic airtime was paused or restarted (service unchanged). */
+    kind: text("kind").notNull().default("Service"),
+    fromService: text("from_service").notNull(),
+    toService: text("to_service").notNull(),
+    reason: text("reason").notNull().default(""),
+    /** Sent / Failed when the customer was sent an SMS about the change; null when not notified. */
+    smsStatus: text("sms_status"),
+    smsError: text("sms_error"),
+    changedBy: uuid("changed_by"),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index("sale_service_changes_sale_idx").on(t.tenantId, t.saleId, t.createdAt),
+    check("sale_service_changes_service", sql`${t.fromService} IN ('None', 'SMS reminder', 'Automatic airtime recharge') AND ${t.toService} IN ('None', 'SMS reminder', 'Automatic airtime recharge')`),
+    check("sale_service_changes_sms", sql`${t.smsStatus} IS NULL OR ${t.smsStatus} IN ('Sent', 'Failed')`),
+    check("sale_service_changes_kind", sql`${t.kind} IN ('Service', 'Suspended', 'Resumed')`),
+  ],
+);
+
+// ------------------------------------------------------------- TextSMS (bulk SMS)
+
+/** One SMS send (Communication → Bulk SMS): one message (with {fields}) to one or more numbers. */
+export const smsBatches = pgTable(
+  "sms_batches",
+  {
+    id: id(),
+    tenantId: tenantId(),
+    /** Chosen by the browser per send, so a repeated submit returns the same send instead of sending again. */
+    clientKey: text("client_key").notNull(),
+    /** Customers, AirtimeReminder, ExpiryReminder, OneOff (numbers typed in), System (sent by another screen). */
+    kind: text("kind").notNull(),
+    /** The message as written, with {fields}. */
+    message: text("message").notNull(),
+    templateName: text("template_name"),
+    recipients: integer("recipients").notNull(),
+    /** Set when TextSMS holds the messages until this time. */
+    scheduledFor: timestamp("scheduled_for", { withTimezone: true }),
+    /** Set when the whole send was refused or could not be confirmed. */
+    error: text("error"),
+    createdBy: uuid("created_by"),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex("sms_batches_tenant_client_key_uq").on(t.tenantId, t.clientKey),
+    index("sms_batches_tenant_created_idx").on(t.tenantId, t.createdAt),
+    check("sms_batches_kind", sql`${t.kind} IN ('Customers', 'AirtimeReminder', 'ExpiryReminder', 'OneOff', 'System')`),
+    check("sms_batches_recipients", sql`${t.recipients} BETWEEN 1 AND 1000`),
+  ],
+);
+
+/** One SMS of a send, with its filled-in text and its result. */
+export const smsMessages = pgTable(
+  "sms_messages",
+  {
+    id: id(),
+    /** Sent to TextSMS as clientsmsid, to match its answers to the messages. */
+    seq: bigint("seq", { mode: "number" }).generatedAlwaysAsIdentity(),
+    tenantId: tenantId(),
+    batchId: uuid("batch_id").notNull().references(() => smsBatches.id, { onDelete: "cascade" }),
+    customerId: uuid("customer_id").references(() => customers.id, { onDelete: "set null" }),
+    /** The device's sale, for reminders about one tracker line. */
+    saleId: uuid("sale_id").references(() => sales.id, { onDelete: "set null" }),
+    /** E.164, e.g. +254712345678. */
+    phone: text("phone").notNull(),
+    message: text("message").notNull(),
+    parts: integer("parts").notNull(),
+    status: text("status").notNull(),
+    /** TextSMS messageid, used for delivery reports. */
+    messageId: text("message_id"),
+    error: text("error"),
+    dlr: text("dlr"),
+    dlrCheckedAt: timestamp("dlr_checked_at", { withTimezone: true }),
+    createdAt: createdAt(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("sms_messages_batch_idx").on(t.batchId),
+    index("sms_messages_tenant_sale_idx").on(t.tenantId, t.saleId, t.createdAt),
+    index("sms_messages_tenant_customer_idx").on(t.tenantId, t.customerId, t.createdAt),
+    check("sms_messages_status", sql`${t.status} IN ('Pending', 'Scheduled', 'Sent', 'Delivered', 'Failed', 'Unknown')`),
+    check("sms_messages_parts", sql`${t.parts} BETWEEN 1 AND 6`),
+  ],
+);
+
+/** Saved messages for Bulk SMS, with {fields} filled in per recipient. */
+export const smsTemplates = pgTable(
+  "sms_templates",
+  {
+    id: id(),
+    tenantId: tenantId(),
+    name: text("name").notNull(),
+    body: text("body").notNull(),
+    audience: text("audience").notNull(),
+    createdAt: createdAt(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("sms_templates_tenant_name_uq").on(t.tenantId, sql`lower(${t.name})`),
+    check("sms_templates_audience", sql`${t.audience} IN ('Customers', 'AirtimeReminder', 'ExpiryReminder', 'OneOff')`),
+  ],
+);
+
+/** Customers blocked from the monthly airtime reminder (Bulk SMS → SMS Reminders → ⋯ → Block). */
+export const smsReminderBlocks = pgTable(
+  "sms_reminder_blocks",
+  {
+    tenantId: tenantId(),
+    customerId: uuid("customer_id").notNull().references(() => customers.id, { onDelete: "cascade" }),
+    blockedBy: uuid("blocked_by"),
+    createdAt: createdAt(),
+  },
+  (t) => [uniqueIndex("sms_reminder_blocks_uq").on(t.tenantId, t.customerId)],
+);
+
+/**
+ * The automatic monthly airtime reminder of a company: when on, the server sends each vehicle's reminder by itself on
+ * the day of the month the device expires (the sale day when it never expires), at `sendHour` Nairobi time.
+ */
+export const smsReminderSettings = pgTable(
+  "sms_reminder_settings",
+  {
+    tenantId: uuid("tenant_id").primaryKey().references(() => tenants.id, { onDelete: "restrict" }),
+    enabled: boolean("enabled").notNull().default(false),
+    message: text("message").notNull(),
+    sendHour: integer("send_hour").notNull().default(9),
+    updatedBy: uuid("updated_by"),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    /** When the automatic job last ran for this company, and what it did (shown on the page). */
+    lastRunAt: timestamp("last_run_at", { withTimezone: true }),
+    lastRunNote: text("last_run_note"),
+  },
+  (t) => [check("sms_reminder_settings_hour", sql`${t.sendHour} BETWEEN 6 AND 20`)],
+);

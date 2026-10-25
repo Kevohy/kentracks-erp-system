@@ -7,7 +7,11 @@
  *   node scripts/user.mts set-password --email you@company.com     (also signs that user out everywhere)
  *   node scripts/user.mts disable --email you@company.com          (also signs that user out everywhere)
  *   node scripts/user.mts enable  --email you@company.com
+ *   node scripts/user.mts set-role --email you@company.com --role admin|staff
  *   node scripts/user.mts list
+ *
+ * Roles: admin can do everything; staff cannot change Settings or GPS platform logins, and cannot spend money (send
+ * airtime or SMS, approve airtime). `create` makes a staff user unless you add --role admin.
  *
  * DATABASE_URL selects the database. The password is typed at a hidden prompt (twice). For automation use
  * --password-stdin and pipe it in; it is never accepted as a command-line argument (those show up in process lists and shell history).
@@ -38,6 +42,7 @@ const { positionals, values } = parseArgs({
     "create-tenant": { type: "boolean" },
     "password-stdin": { type: "boolean" },
     "allow-remote": { type: "boolean" },
+    role: { type: "string" },
   },
 });
 const command = positionals[0];
@@ -50,6 +55,13 @@ const url = process.env.DATABASE_URL ?? fail("Set DATABASE_URL first.");
 const host = (() => { try { return new URL(url).hostname.replace(/^\[|\]$/g, ""); } catch { return fail("DATABASE_URL is not a valid connection string."); } })();
 const isLocal = ["localhost", "127.0.0.1", "::1"].includes(host) || host.endsWith(".localhost");
 if (!isLocal && !values["allow-remote"]) fail(`DATABASE_URL points at "${host}", which is not this machine. Add --allow-remote if that is intended.`);
+
+function roleArg(fallback: "admin" | "staff" | null): "admin" | "staff" {
+  const r = (values.role ?? "").trim().toLowerCase();
+  if (!r && fallback) return fallback;
+  if (r !== "admin" && r !== "staff") return fail("Give --role admin or --role staff.");
+  return r;
+}
 
 function normaliseEmail(): string {
   const e = (values.email ?? "").trim().toLowerCase();
@@ -119,9 +131,10 @@ try {
       }
     } else fail("Give --tenant-id or --tenant-name: every user belongs to one company.");
     if ((await client.query("select 1 from users where lower(email) = $1", [email])).rowCount) fail("A user with that email already exists.");
+    const role = roleArg("staff");
     const hash = await hashPassword(await readPassword());
-    await client.query("insert into users (tenant_id, email, full_name, password_hash) values ($1, $2, $3, $4)", [tenantId, email, fullName, hash]);
-    console.log(`Created user ${email} in company ${tenantId}.`);
+    await client.query("insert into users (tenant_id, email, full_name, password_hash, role) values ($1, $2, $3, $4, $5)", [tenantId, email, fullName, hash, role]);
+    console.log(`Created ${role} user ${email} in company ${tenantId}.`);
   } else if (command === "set-password") {
     const email = normaliseEmail();
     const u = await client.query("select id from users where lower(email) = $1", [email]);
@@ -136,12 +149,18 @@ try {
     if (!r.rows[0]) fail("No user with that email.");
     if (command === "disable") await client.query("delete from sessions where user_id = $1", [r.rows[0].id]);
     console.log(`${email} is now ${command}d.`);
+  } else if (command === "set-role") {
+    const email = normaliseEmail();
+    const role = roleArg(null);
+    const r = await client.query("update users set role = $2, updated_at = now() where lower(email) = $1 returning id", [email, role]);
+    if (!r.rows[0]) fail("No user with that email.");
+    console.log(`${email} is now ${role === "admin" ? "an admin" : "staff"}.`);
   } else if (command === "list") {
-    const r = await client.query("select u.email, u.full_name, t.name as company, u.is_active, u.last_login_at from users u join tenants t on t.id = u.tenant_id order by u.email");
+    const r = await client.query("select u.email, u.full_name, u.role, t.name as company, u.is_active, u.last_login_at from users u join tenants t on t.id = u.tenant_id order by u.email");
     if (!r.rows.length) console.log("No users yet.");
-    for (const u of r.rows) console.log(`${u.is_active ? "active  " : "disabled"}  ${u.email}  ${u.full_name}  [${u.company}]  last sign-in: ${u.last_login_at?.toISOString() ?? "never"}`);
+    for (const u of r.rows) console.log(`${u.is_active ? "active  " : "disabled"}  ${u.role.padEnd(5)}  ${u.email}  ${u.full_name}  [${u.company}]  last sign-in: ${u.last_login_at?.toISOString() ?? "never"}`);
   } else {
-    fail("Commands: create, set-password, disable, enable, list. See the comment at the top of scripts/user.mts.");
+    fail("Commands: create, set-password, set-role, disable, enable, list. See the comment at the top of scripts/user.mts.");
   }
 } finally {
   await client.end();
