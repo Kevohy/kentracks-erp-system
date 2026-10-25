@@ -85,7 +85,7 @@ export const navigation: NavItem[] = [
     children: [
       { label: "Bulk SMS", href: "/communication/bulk-sms", built: true },
       { label: "Airtime", href: "/communication/airtime", built: true },
-      { label: "GPS Platform", href: "/communication/gps-platform" },
+      { label: "GPS Platform", href: "/communication/gps-platform", built: true },
     ],
   },
   {
@@ -106,7 +106,6 @@ export const navigation: NavItem[] = [
     children: [
       { label: "Packages", href: "/settings/packages", built: true },
       { label: "Brands", href: "/settings/brands", built: true },
-      { label: "GPS Platforms", href: "/settings/gps-platforms", built: true },
       { label: "Africa's Talking", href: "/settings/africastalking", built: true },
     ],
   },
