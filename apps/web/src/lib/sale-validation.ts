@@ -373,6 +373,10 @@ export function validatePackageSale(
         // Billing → IoT SIM only covers IoT SIMs taken from our stock (a customer's own SIM is not billed).
         // An old sale's IoT SIM was taken from stock back then, so it is billed too.
         iotBilling: isIotSim(sim.type) && (simDeducted || old),
+        serviceChanges: [],
+        airtimeStatus: d.autoRecharge && airtimeAllowed(ctx.kind, sim.type) ? "Waiting for approval" : null,
+        // A new sale on the SMS reminder is due for this month's reminder (Communication → Bulk SMS → Reminders).
+        reminder: d.smsReminder && !d.autoRecharge && airtimeAllowed(ctx.kind, sim.type) ? { status: "Due", recent: [], total: 0 } : null,
       },
       technician: technician ? { id: technician.id, name: technician.name } : null,
       expensesMinor: { installation, transport, commission, other },

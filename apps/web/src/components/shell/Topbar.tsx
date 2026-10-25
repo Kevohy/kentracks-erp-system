@@ -1,20 +1,20 @@
-import type { Ref } from "react";
-import { Bell, Menu, Search } from "lucide-react";
+import Link from "next/link";
+import { Bell, MapPin, Search } from "lucide-react";
 import { AccountMenu } from "./AccountMenu";
 
-export function Topbar({ onMenu, menuButtonRef }: { onMenu: () => void; menuButtonRef?: Ref<HTMLButtonElement> }) {
+/** Top bar. On phones and tablets the menu lives in the bottom bar (MobileNav), so the brand shows here instead. */
+export function Topbar() {
   return (
     <header className="sticky top-0 z-20 flex h-17 items-center gap-3.5 border-b border-line bg-white/95 px-4 backdrop-blur sm:px-8">
-      <button
-        type="button"
-        ref={menuButtonRef}
-        onClick={onMenu}
-        aria-label="Open menu"
-        aria-controls="primary-sidebar"
-        className="grid size-11 shrink-0 place-items-center rounded-[10px] border border-line text-ink hover:bg-canvas lg:hidden"
-      >
-        <Menu size={22} aria-hidden="true" />
-      </button>
+      <Link href="/" aria-label="Kentracks ERP, dashboard" className="flex shrink-0 items-center gap-2.5 rounded-xl lg:hidden">
+        <span className="grid size-10 place-items-center rounded-xl bg-brand text-[#181617]" aria-hidden="true">
+          <MapPin size={21} strokeWidth={2} />
+        </span>
+        <span className="leading-tight max-sm:hidden sm:block">
+          <span className="block text-[16px] font-semibold text-ink">Kentracks</span>
+          <span className="block text-[10.5px] uppercase tracking-[1.3px] text-muted">ERP System</span>
+        </span>
+      </Link>
 
       <div className="relative hidden max-w-110 flex-1 sm:block">
         <Search

@@ -696,7 +696,7 @@ export function IotSimsView() {
       <SimActionDialog action={action} onClose={() => setAction(null)} onDone={done} />
       <BillDialog group={billGroup} onClose={() => setBillGroup(null)} onDone={done} />
       <AddGroupDialog open={addGroup} onClose={() => setAddGroup(false)} onDone={done} />
-      {flash && <div role="status" className="fixed bottom-5 left-1/2 z-30 -translate-x-1/2 rounded-xl bg-ink px-4 py-2.5 text-[14px] font-medium text-white shadow-lg">{flash}</div>}
+      {flash && <div role="status" className="fixed bottom-[calc(84px+env(safe-area-inset-bottom))] left-1/2 z-40 -translate-x-1/2 rounded-xl bg-ink lg:bottom-5 px-4 py-2.5 text-[14px] font-medium text-white shadow-lg">{flash}</div>}
       <p className="mt-6 text-[12.5px] text-muted">
         IoT SIMs come from sales that took an IoT SIM card out of stock. <Link href="/sales" className="font-semibold text-navy hover:underline">See all sales</Link>
       </p>

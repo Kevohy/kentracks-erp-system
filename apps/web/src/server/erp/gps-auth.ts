@@ -2,11 +2,12 @@ import "server-only";
 import { createHash } from "node:crypto";
 import { and, asc, eq, sql } from "drizzle-orm";
 import { GPS_PLATFORMS, isGpsPlatformId, type GpsAccountStatus, type GpsPlatformId, type GpsPlatformInfo } from "@/lib/gps-platforms";
-import type { AuthContext } from "../crm/auth";
+import { requireAdmin, type AuthContext } from "../crm/auth";
 import { getDb } from "../crm/db";
 import { isUuid, uniqueViolation } from "../crm/http";
 import { throwValidation, type Body, Reader } from "./body";
 import { gpsPlatformAccounts } from "./schema";
+import { isSealed, open, seal, SecretKeyError, secretKeyConfigured } from "../secret-box";
 
 /**
  * GPS platforms → access token (API doc 2.1 "Get access token"). Kentracks (api.kentracksgps.com) and iTrack
@@ -24,7 +25,7 @@ import { gpsPlatformAccounts } from "./schema";
  */
 
 /** Each platform's API address comes from GPS_PLATFORMS. GPS_API_URL may override them all (tests use a fake API). */
-export type GpsCredentials = { platform: GpsPlatformId; baseUrl: string; account: string; passwordMd5: string };
+export type GpsCredentials = { platform: GpsPlatformId; baseUrl: string; account: string; passwordMd5: string; keyProblem?: string };
 
 export const platformName = (id: GpsPlatformId) => GPS_PLATFORMS.find((p) => p.id === id)?.name ?? "The GPS platform";
 
@@ -46,6 +47,27 @@ const REQUEST_TIMEOUT_MS = 10_000;
 const DEFAULT_LIFETIME_S = 7200;
 const MAX_ACCOUNT = 64;
 const MAX_PASSWORD = 128;
+
+/** Hosts whose https could not be reached, with when to try https again (only used with GPS_ALLOW_HTTP=1). */
+const httpOnlyUntil = new Map<string, number>();
+
+/**
+ * GET a GPS platform URL. Always https; plain http is used only when the server sets GPS_ALLOW_HTTP=1 and the https
+ * request could not connect (a provider without https). That choice is remembered for an hour per host.
+ */
+export async function gpsFetch(url: URL, timeoutMs = REQUEST_TIMEOUT_MS): Promise<Response> {
+  const init = () => ({ method: "GET", cache: "no-store" as const, headers: { Accept: "application/json" }, signal: AbortSignal.timeout(timeoutMs) });
+  const allowHttp = process.env.GPS_ALLOW_HTTP === "1" && url.protocol === "https:";
+  const plain = () => { const u = new URL(url); u.protocol = "http:"; return u; };
+  if (allowHttp && (httpOnlyUntil.get(url.host) ?? 0) > Date.now()) return fetch(plain(), init());
+  try {
+    return await fetch(url, init());
+  } catch (e) {
+    if (!allowHttp) throw e;
+    httpOnlyUntil.set(url.host, Date.now() + 60 * 60_000);
+    return fetch(plain(), init());
+  }
+}
 
 export const md5 = (s: string) => createHash("md5").update(s, "utf8").digest("hex");
 /** md5(md5(password) + time), 32 lower-case hex characters. Takes md5(password), which is what is stored. */
@@ -98,13 +120,17 @@ async function requestToken(c: GpsCredentials): Promise<{ token: string; lifetim
 
   let res: Response;
   try {
-    res = await fetch(url, { method: "GET", cache: "no-store", headers: { Accept: "application/json" }, signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
+    if (!c.passwordMd5) throw new GpsAuthError("not-configured", c.keyProblem ?? "The saved login cannot be read. Ask the system administrator to check GPS_CREDENTIALS_KEY.");
+    res = await gpsFetch(url);
   } catch (e) {
+    if (e instanceof GpsAuthError) throw e;
     const timeout = e instanceof Error && (e.name === "TimeoutError" || e.name === "AbortError");
     // The URL holds the account and signature, so it is never part of the message.
     throw timeout
       ? new GpsAuthError("timeout", `${name} did not answer within ${REQUEST_TIMEOUT_MS / 1000} seconds. Try again.`)
-      : new GpsAuthError("network", `Could not reach ${name}. Check the internet connection and try again.`);
+      : new GpsAuthError("network", url.protocol === "https:" && process.env.GPS_ALLOW_HTTP !== "1"
+        ? `Could not reach ${name} over a secure (https) connection. Check the internet connection and try again. If ${name} has no https, the system administrator can allow plain http (GPS_ALLOW_HTTP=1).`
+        : `Could not reach ${name}. Check the internet connection and try again.`);
   }
   let body: unknown;
   try {
@@ -171,7 +197,36 @@ export function invalidateAccessToken(token: string) {
 }
 
 type AccountRow = typeof gpsPlatformAccounts.$inferSelect;
-const credsOf = (r: AccountRow): GpsCredentials => ({ platform: r.platform as GpsPlatformId, baseUrl: baseUrl(r.platform as GpsPlatformId), account: r.account, passwordMd5: r.passwordMd5 });
+/** The stored login is encrypted (secret-box) and bound to its company. */
+const secretContext = (tenantId: string) => `gps-account:${tenantId}`;
+function credsOf(r: AccountRow): GpsCredentials {
+  const base = { platform: r.platform as GpsPlatformId, baseUrl: baseUrl(r.platform as GpsPlatformId), account: r.account };
+  try {
+    return { ...base, passwordMd5: open(r.passwordMd5, secretContext(r.tenantId)) };
+  } catch (e) {
+    return { ...base, passwordMd5: "", keyProblem: e instanceof SecretKeyError ? `${e.message} Ask the system administrator.` : "The saved login cannot be read." };
+  }
+}
+
+/** Encrypts the login for storage. Refuses (422) when the server has no GPS_CREDENTIALS_KEY: never stored in the clear. */
+function sealed(tenantId: string, passwordMd5: string): string {
+  try {
+    return seal(passwordMd5, secretContext(tenantId));
+  } catch {
+    return throwValidation({ form: "GPS platform logins cannot be saved securely yet: the server has no GPS_CREDENTIALS_KEY. Ask the system administrator to set it." });
+  }
+}
+
+/** Logins saved before encryption was added are encrypted the next time they are read (when the key is set). */
+async function upgradeLegacy(rows: AccountRow[]): Promise<void> {
+  if (!secretKeyConfigured()) return;
+  for (const r of rows) {
+    if (isSealed(r.passwordMd5) || !/^[0-9a-f]{32}$/.test(r.passwordMd5)) continue;
+    const enc = seal(r.passwordMd5, secretContext(r.tenantId));
+    await getDb().update(gpsPlatformAccounts).set({ passwordMd5: enc }).where(and(eq(gpsPlatformAccounts.id, r.id), eq(gpsPlatformAccounts.passwordMd5, r.passwordMd5)));
+    r.passwordMd5 = enc;
+  }
+}
 
 function statusOf(r: AccountRow): GpsAccountStatus {
   const s = state(credsOf(r));
@@ -198,6 +253,7 @@ const serverOf = (platform: GpsPlatformId) => {
 async function accountRow(ctx: AuthContext, id: string): Promise<AccountRow | null> {
   if (!isUuid(id)) return null;
   const [r] = await getDb().select().from(gpsPlatformAccounts).where(and(eq(gpsPlatformAccounts.id, id), eq(gpsPlatformAccounts.tenantId, ctx.tenantId)));
+  if (r) await upgradeLegacy([r]);
   return r ?? null;
 }
 
@@ -206,6 +262,7 @@ export async function platformAccounts(tenantId: string, platform: GpsPlatformId
   const rows = await getDb().select().from(gpsPlatformAccounts)
     .where(and(eq(gpsPlatformAccounts.tenantId, tenantId), eq(gpsPlatformAccounts.platform, platform)))
     .orderBy(asc(gpsPlatformAccounts.createdAt), asc(gpsPlatformAccounts.id));
+  await upgradeLegacy(rows);
   return rows.map((r) => ({ id: r.id, account: r.account, credentials: credsOf(r) }));
 }
 
@@ -213,11 +270,13 @@ export async function platformAccounts(tenantId: string, platform: GpsPlatformId
 export async function listGpsPlatforms(ctx: AuthContext): Promise<GpsPlatformInfo[]> {
   const rows = await getDb().select().from(gpsPlatformAccounts).where(eq(gpsPlatformAccounts.tenantId, ctx.tenantId))
     .orderBy(asc(gpsPlatformAccounts.createdAt), asc(gpsPlatformAccounts.id));
+  await upgradeLegacy(rows);
   return GPS_PLATFORMS.map((p) => ({ id: p.id, name: p.name, server: serverOf(p.id), accounts: rows.filter((r) => r.platform === p.id).map(statusOf) }));
 }
 
 /** POST …/accounts/{id}/test — make sure the account holds a valid token (asks the API only when needed). */
 export async function testGpsAccount(ctx: AuthContext, id: string): Promise<{ ok: boolean; message?: string; account: GpsAccountStatus } | null> {
+  requireAdmin(ctx, "manage GPS platform accounts");
   const r = await accountRow(ctx, id);
   if (!r) return null;
   try {
@@ -257,6 +316,7 @@ const duplicate = () => throwValidation({ account: "This account is already adde
 
 /** POST /api/settings/gps-platforms/{platform}/accounts { account, password } — add an account the platform accepts. */
 export async function addGpsAccount(ctx: AuthContext, platform: string, body: Body): Promise<GpsAccountStatus | null> {
+  requireAdmin(ctx, "manage GPS platform accounts");
   if (!isGpsPlatformId(platform)) return null;
   const { account, password } = readAccount(body, true);
   const db = getDb();
@@ -264,10 +324,11 @@ export async function addGpsAccount(ctx: AuthContext, platform: string, body: Bo
     .where(and(eq(gpsPlatformAccounts.tenantId, ctx.tenantId), eq(gpsPlatformAccounts.platform, platform), sql`lower(${gpsPlatformAccounts.account}) = lower(${account})`));
   if (dupe) duplicate();
   const c: GpsCredentials = { platform, baseUrl: baseUrl(platform), account, passwordMd5: md5(password) };
+  const stored = sealed(ctx.tenantId, c.passwordMd5); // refuse before contacting the platform if it cannot be stored encrypted
   await mustSignIn(c);
   try {
     const [row] = await db.insert(gpsPlatformAccounts)
-      .values({ tenantId: ctx.tenantId, platform, account, passwordMd5: c.passwordMd5, createdBy: ctx.userId })
+      .values({ tenantId: ctx.tenantId, platform, account, passwordMd5: stored, createdBy: ctx.userId })
       .returning();
     return statusOf(row);
   } catch (e) {
@@ -278,6 +339,7 @@ export async function addGpsAccount(ctx: AuthContext, platform: string, body: Bo
 
 /** PUT …/accounts/{id} { account, password } — change an account; an empty password keeps the saved one. */
 export async function updateGpsAccount(ctx: AuthContext, id: string, body: Body): Promise<GpsAccountStatus | null> {
+  requireAdmin(ctx, "manage GPS platform accounts");
   const existing = await accountRow(ctx, id);
   if (!existing) return null;
   const { account, password } = readAccount(body, false);
@@ -285,11 +347,12 @@ export async function updateGpsAccount(ctx: AuthContext, id: string, body: Body)
   const [dupe] = await db.select({ id: gpsPlatformAccounts.id }).from(gpsPlatformAccounts)
     .where(and(eq(gpsPlatformAccounts.tenantId, ctx.tenantId), eq(gpsPlatformAccounts.platform, existing.platform), sql`lower(${gpsPlatformAccounts.account}) = lower(${account})`, sql`${gpsPlatformAccounts.id} <> ${id}::uuid`));
   if (dupe) duplicate();
-  const c: GpsCredentials = { platform: existing.platform as GpsPlatformId, baseUrl: baseUrl(existing.platform as GpsPlatformId), account, passwordMd5: password ? md5(password) : existing.passwordMd5 };
+  const c: GpsCredentials = { platform: existing.platform as GpsPlatformId, baseUrl: baseUrl(existing.platform as GpsPlatformId), account, passwordMd5: password ? md5(password) : credsOf(existing).passwordMd5 };
+  const stored = sealed(ctx.tenantId, c.passwordMd5);
   await mustSignIn(c);
   try {
     const [row] = await db.update(gpsPlatformAccounts)
-      .set({ account, passwordMd5: c.passwordMd5, updatedAt: new Date() })
+      .set({ account, passwordMd5: stored, updatedAt: new Date() })
       .where(and(eq(gpsPlatformAccounts.id, id), eq(gpsPlatformAccounts.tenantId, ctx.tenantId)))
       .returning();
     return row ? statusOf(row) : null;
@@ -301,6 +364,7 @@ export async function updateGpsAccount(ctx: AuthContext, id: string, body: Body)
 
 /** DELETE …/accounts/{id} — remove an account from the ERP. */
 export async function removeGpsAccount(ctx: AuthContext, id: string): Promise<{ id: string } | null> {
+  requireAdmin(ctx, "manage GPS platform accounts");
   if (!isUuid(id)) return null;
   const rows = await getDb().delete(gpsPlatformAccounts)
     .where(and(eq(gpsPlatformAccounts.id, id), eq(gpsPlatformAccounts.tenantId, ctx.tenantId)))

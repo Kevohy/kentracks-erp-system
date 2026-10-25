@@ -10,26 +10,43 @@ import { loginAttempts } from "./schema";
  * is removed again when the sign-in succeeds. Once an account or address has too many attempts in the
  * window, further attempts are refused without checking the password at all.
  *
- * Trade-off, accepted: someone who knows an email address can lock that account for the window.
+ * When the client address is known (behind a trusted proxy, see clientIp), the tight limit is per account AND address:
+ * someone guessing from elsewhere cannot lock the real user out, and a looser per-account limit still stops guessing
+ * spread over many addresses. Without a trusted address only the per-account limit can apply.
+ * Either way, a browser that signed in to the account before (device.ts) has its own limit and is not locked out by
+ * guesses made elsewhere; only browsers the account has never used can be held back by someone else's guessing.
  * The lock never reveals whether the account exists - unknown emails are throttled the same way.
  */
 export const LIMITS = {
   windowSeconds: 15 * 60,
+  /** Per account (and, when the address is known, per account + address). */
   perAccount: 8,
+  /** Per account across all addresses, used only when the address is known. */
+  perAccountAllAddresses: 50,
   perIp: 40,
+  /** Per trusted browser (one that signed in to this account before); the other limits do not apply to it. */
+  perTrustedDevice: 8,
 } as const;
 
 const hashKey = (v: string) => createHash("sha256").update(v).digest("hex");
 
 /**
- * The client address, ONLY when the deployment says its reverse proxy sets it (AUTH_TRUST_PROXY=1, for example behind
- * Cloudflare/Traefik). Otherwise the headers can be forged, so no per-address limit is applied and only the per-account one is.
+ * The client address, ONLY when the deployment says a reverse proxy sets it. Otherwise the headers can be forged, so no
+ * per-address limit is applied and only the per-account one is.
+ *   AUTH_TRUST_PROXY=cloudflare   behind Cloudflare: cf-connecting-ip (Cloudflare overwrites what the client sends)
+ *   AUTH_TRUST_PROXY=1            behind one other proxy (e.g. Traefik): the LAST x-forwarded-for entry, the one that
+ *                                 proxy added. Earlier entries come from the client and can be forged.
  */
 export function clientIp(req: Request): string | null {
-  if (process.env.AUTH_TRUST_PROXY !== "1") return null;
-  const v = req.headers.get("cf-connecting-ip") ?? req.headers.get("x-forwarded-for")?.split(",")[0] ?? req.headers.get("x-real-ip");
+  const mode = (process.env.AUTH_TRUST_PROXY ?? "").trim().toLowerCase();
+  let v: string | null | undefined = null;
+  if (mode === "cloudflare") v = req.headers.get("cf-connecting-ip");
+  else if (mode === "1" || mode === "true" || mode === "proxy") {
+    const chain = (req.headers.get("x-forwarded-for") ?? "").split(",").map((x) => x.trim()).filter(Boolean);
+    v = chain.at(-1) ?? req.headers.get("x-real-ip");
+  }
   const ip = v?.trim();
-  return ip && ip.length <= 64 ? ip : null;
+  return ip && ip.length <= 64 && /^[0-9a-fA-F:.]+$/.test(ip) ? ip : null;
 }
 
 export type Attempt = { allowed: true; ids: string[] } | { allowed: false; retryAfterSeconds: number };
@@ -49,16 +66,31 @@ async function take(scope: "account" | "ip", key: string, limit: number): Promis
   return { id: mine.id, over, retryAfterSeconds };
 }
 
-export async function beginAttempt(email: string, ip: string | null): Promise<Attempt> {
-  const account = await take("account", email, LIMITS.perAccount);
-  if (account.over) return { allowed: false, retryAfterSeconds: account.retryAfterSeconds };
-  const ids = [account.id];
+/**
+ * `deviceId` is set when the browser proved it signed in to this account before (device.ts). Such an attempt counts
+ * only against that browser's own limit: guesses from other browsers or addresses cannot lock it out, and it cannot be
+ * used to guess further, because a valid token exists only after a correct password and dies when the password changes.
+ */
+export async function beginAttempt(email: string, ip: string | null, deviceId: string | null = null): Promise<Attempt> {
+  const ids: string[] = [];
+  const refuse = async (retryAfterSeconds: number): Promise<Attempt> => {
+    for (const id of ids) await getDb().delete(loginAttempts).where(eq(loginAttempts.id, id));
+    return { allowed: false, retryAfterSeconds };
+  };
+  if (deviceId) {
+    const device = await take("account", `${email}|device|${deviceId}`, LIMITS.perTrustedDevice);
+    return device.over ? refuse(device.retryAfterSeconds) : { allowed: true, ids: [device.id] };
+  }
+  // Without a trusted address: one limit per account. With one: per account + address, and a looser per-account limit.
+  const account = await take("account", ip ? `${email}|${ip}` : email, LIMITS.perAccount);
+  if (account.over) return refuse(account.retryAfterSeconds);
+  ids.push(account.id);
   if (ip) {
+    const all = await take("account", `${email}|*`, LIMITS.perAccountAllAddresses);
+    if (all.over) return refuse(all.retryAfterSeconds);
+    ids.push(all.id);
     const byIp = await take("ip", ip, LIMITS.perIp);
-    if (byIp.over) {
-      await getDb().delete(loginAttempts).where(eq(loginAttempts.id, account.id));
-      return { allowed: false, retryAfterSeconds: byIp.retryAfterSeconds };
-    }
+    if (byIp.over) return refuse(byIp.retryAfterSeconds);
     ids.push(byIp.id);
   }
   return { allowed: true, ids };
