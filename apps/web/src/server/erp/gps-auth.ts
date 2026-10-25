@@ -16,7 +16,7 @@ import { isSealed, open, seal, SecretKeyError, secretKeyConfigured } from "../se
  *   GET {platform url}/api/authorization?time={unix seconds}&account={account}&signature={md5(md5(password) + time)}
  *   → { "code": 0, "record": { "access_token": "…", "expires_in": 7200 } }
  *
- * A company adds one or more API accounts per platform (account and password only) in Settings → GPS Platforms. Only
+ * A company adds one or more API accounts per platform (account and password only) in Communication → GPS Platform. Only
  * md5(password) is kept, which is all the signature needs; the password as typed is never stored. Every other API
  * request needs a token. A token lives 2 hours and asking for a new one cancels the old one immediately, so the server
  * keeps ONE token per account, shares it between requests, and asks again only every 90 minutes (or sooner if it is

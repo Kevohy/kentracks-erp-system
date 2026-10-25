@@ -20,7 +20,7 @@ import { GpsAuthError, gpsFetch, invalidateAccessToken, platformAccounts, platfo
  *   → { "code": 0, "record": [ { imei, devicename, devicetype, platenumber, simcard, iccid, activatedtime,
  *                                platformduetime, userduetime, onlinetime, customeraccount }, … ] }
  *
- * A company can have several API accounts per platform (Settings → GPS Platforms), each seeing its own devices, so the
+ * A company can have several API accounts per platform (Communication → GPS Platform), each seeing its own devices, so the
  * accounts are asked in turn (Kentracks accounts first, then iTrack, oldest first) for the IMEIs not found yet. An IMEI no account knows is "not found".
  * The token goes only in the request to the platform; it is never logged or sent to the browser.
  *
@@ -145,7 +145,7 @@ async function lookUp(accounts: GpsCredentials[], imeis: string[]): Promise<{ fo
 }
 
 const NAMES = GPS_PLATFORMS.map((p) => p.name).join(" or ");
-const NO_ACCOUNT = `No GPS platform is connected: add your ${NAMES} API account in Settings → GPS Platforms to verify IMEIs.`;
+const NO_ACCOUNT = `No GPS platform is connected: add your ${NAMES} API account in Communication → GPS Platform to verify IMEIs.`;
 
 /** The company's accounts on every platform, in platform order (Kentracks first), oldest first within each. */
 export async function allPlatformAccounts(tenantId: string): Promise<GpsCredentials[]> {
@@ -209,7 +209,7 @@ export async function verifyImeis(
     if (!hit || !rec) {
       out.set(imei, error
         ? { ok: false, code: error.code, message: error.message }
-        : { ok: false, code: "not-found", message: `This IMEI was not found on ${[...new Set(accounts.map((c) => platformName(c.platform)))].join(" or ")} under your API accounts. Check the number, or add the account that owns the device in Settings → GPS Platforms.` });
+        : { ok: false, code: "not-found", message: `This IMEI was not found on ${[...new Set(accounts.map((c) => platformName(c.platform)))].join(" or ")} under your API accounts. Check the number, or add the account that owns the device in Communication → GPS Platform.` });
       continue;
     }
     const owner = typeof rec.customeraccount === "string" && rec.customeraccount.trim() ? ownerOf.get(`${hit.by.platform}|${hit.by.account}|${rec.customeraccount.trim().toLowerCase()}`) : null;

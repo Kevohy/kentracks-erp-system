@@ -169,7 +169,7 @@ function AccountRow({ a, platform, onChange, onRemoved, setNote }: {
   );
 }
 
-/** Settings → GPS Platforms: each platform (Kentracks, iTrack) with the company's API accounts on it. */
+/** Communication → GPS Platform: each platform (Kentracks, iTrack) with the company's API accounts on it. */
 export function GpsPlatformView() {
   const [platforms, setPlatforms] = useState<GpsPlatformInfo[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -192,7 +192,7 @@ export function GpsPlatformView() {
 
   return (
     <>
-      <PageHeader title="GPS Platforms" subtitle="The tracking platforms the ERP connects to, and your API accounts on each." />
+      <PageHeader title="GPS Platform" subtitle="The tracking platforms the ERP connects to, and your API accounts on each." />
       {loadError && <p role="alert" className="mt-5 text-[#C62828]">{loadError}</p>}
       {!platforms && !loadError && <p role="status" className="mt-5 flex items-center gap-2 text-muted"><Loader2 size={16} className="animate-spin" aria-hidden="true" />Loading…</p>}
 
