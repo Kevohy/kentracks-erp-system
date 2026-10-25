@@ -476,7 +476,7 @@ export const iotSimBills = pgTable(
 export const GPS_PLATFORM_IDS = ["kentracks", "itrack"] as const;
 
 /**
- * A company's API accounts on a GPS platform (Settings → GPS Platforms); a company may have several per platform.
+ * A company's API accounts on a GPS platform (Communication → GPS Platform); a company may have several per platform.
  * The Kentracks API signs in with md5(md5(password) + time), so only md5(password) is kept: the password as typed is
  * never stored, and none of this is sent back to the browser.
  */

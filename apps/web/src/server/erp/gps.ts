@@ -7,7 +7,7 @@ import { verifyImeis } from "./gps-devices";
 
 /**
  * Server-side IMEI verification. The server checks the IMEI itself and never trusts device details sent by the
- * browser. A company with Kentracks or iTrack API accounts (Settings → GPS Platforms) is verified against the real
+ * browser. A company with Kentracks or iTrack API accounts (Communication → GPS Platform) is verified against the real
  * platform APIs (src/server/erp/gps-devices.ts). Without any account, the development MOCK is used only when GPS_MOCK=1 is set
  * on a machine whose database is local; anywhere else verification fails closed with a clear message, so a sale
  * cannot be recorded with an unverified device.

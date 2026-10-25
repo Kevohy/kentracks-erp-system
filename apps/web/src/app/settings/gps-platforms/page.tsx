@@ -1,14 +1,6 @@
-import type { Metadata } from "next";
-import { Breadcrumbs } from "@/components/shell/PageHeader";
-import { GpsPlatformView } from "@/components/settings/GpsPlatformView";
+import { permanentRedirect } from "next/navigation";
 
-export const metadata: Metadata = { title: "GPS Platforms" };
-
-export default function GpsPlatformsPage() {
-  return (
-    <>
-      <Breadcrumbs items={["Settings", "GPS Platforms"]} />
-      <GpsPlatformView />
-    </>
-  );
+/** GPS platforms moved to Communication → GPS Platform; old links and bookmarks still work. */
+export default function OldGpsPlatformsPage() {
+  permanentRedirect("/communication/gps-platform");
 }

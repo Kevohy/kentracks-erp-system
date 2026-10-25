@@ -77,7 +77,7 @@ export function PackageSaleForm({ kind = "Package Sale" }: { kind?: "Package Sal
   const [errors, setErrors] = useState<SaleErrors>({});
   const [saved, setSaved] = useState<PackageSale | null>(null);
 
-  // How the server verifies IMEIs for this company: its GPS platforms (Settings → GPS Platforms), the dev mock, or not at all.
+  // How the server verifies IMEIs for this company: its GPS platforms (Communication → GPS Platform), the dev mock, or not at all.
   const [gpsMode, setGpsMode] = useState<"live" | "mock" | "none" | null>(null);
   useEffect(() => {
     let live = true;
@@ -408,7 +408,7 @@ export function PackageSaleForm({ kind = "Package Sale" }: { kind?: "Package Sal
           <div className="rounded-xl border border-[#F0C98C] bg-[#FFF8EC] px-4 py-3 text-[14px] text-[#6b3a00]">
             <p className="font-semibold">No GPS platform is connected.</p>
             <p>
-              Add your Kentracks or iTrack API account in <Link href="/settings/gps-platforms" className="font-semibold underline">Settings → GPS Platforms</Link> to verify IMEIs. A {kind} cannot be completed until then.
+              Add your Kentracks or iTrack API account in <Link href="/communication/gps-platform" className="font-semibold underline">Communication → GPS Platform</Link> to verify IMEIs. A {kind} cannot be completed until then.
             </p>
           </div>
         )}
