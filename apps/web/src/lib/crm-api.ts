@@ -1,4 +1,4 @@
-import type { Brand } from "./brands";
+import type { Brand, BrandImageKind, BrandProfile } from "./brands";
 import type { Customer, CustomerType } from "./customers";
 import type { Supplier, SupplierType } from "./suppliers";
 import type { Technician } from "./technicians";
@@ -41,8 +41,10 @@ type Values = Partial<Record<string, string>>;
 export const crmApi = {
   brands: {
     list: () => call<Brand[]>("GET", "/api/settings/brands"),
-    create: (name: string) => call<Brand>("POST", "/api/settings/brands", { name }),
-    update: (id: string, name: string) => call<Brand>("PUT", `/api/settings/brands/${id}`, { name }),
+    create: (profile: BrandProfile) => call<Brand>("POST", "/api/settings/brands", profile),
+    update: (id: string, profile: BrandProfile) => call<Brand>("PUT", `/api/settings/brands/${id}`, profile),
+    setImage: (id: string, kind: BrandImageKind, image: string) => call<Brand>("PUT", `/api/settings/brands/${id}/images/${kind}`, { image }),
+    removeImage: (id: string, kind: BrandImageKind) => call<Brand>("DELETE", `/api/settings/brands/${id}/images/${kind}`),
   },
   customers: {
     list: () => call<Customer[]>("GET", "/api/crm/customers"),
