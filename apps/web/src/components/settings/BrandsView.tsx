@@ -7,12 +7,13 @@ import { ListStatusRow, useCrmList } from "@/components/crm/useCrmList";
 import { TextField } from "@/components/sales/fields";
 import { PageHeader } from "@/components/shell/PageHeader";
 import { validateBrand, type BrandErrors } from "@/lib/brand-validation";
-import { BRAND_IMAGE_TYPES, MAX_BRAND_IMAGE_BYTES, type Brand, type BrandImageKind, type BrandProfile } from "@/lib/brands";
+import { BRAND_IMAGE_TYPES, DEFAULT_BRAND_COLOR, MAX_BRAND_IMAGE_BYTES, type Brand, type BrandImageKind, type BrandProfile } from "@/lib/brands";
+import { dominantColor } from "@/lib/dominant-color";
 import { crmApi } from "@/lib/crm-api";
 import { localPhone } from "@/lib/sms";
 import { stripControlChars } from "@/lib/validation";
 
-const EMPTY: BrandProfile = { name: "", tagline: "", phone: "", email: "", website: "", location: "", directorName: "" };
+const EMPTY: BrandProfile = { name: "", tagline: "", phone: "", email: "", website: "", location: "", directorName: "", color: "" };
 const FIELDS: { key: keyof BrandProfile; label: string; placeholder: string }[] = [
   { key: "name", label: "Brand name", placeholder: "e.g. Kentracks" },
   { key: "tagline", label: "Tagline", placeholder: "e.g. Track what matters" },
@@ -24,6 +25,7 @@ const FIELDS: { key: keyof BrandProfile; label: string; placeholder: string }[] 
 ];
 const toProfile = (b: Brand): BrandProfile => ({
   name: b.name, tagline: b.tagline, phone: b.phone ? localPhone(b.phone) : "", email: b.email, website: b.website, location: b.location, directorName: b.directorName,
+  color: b.color,
 });
 
 function readImage(file: File): Promise<string> {
@@ -35,8 +37,8 @@ function readImage(file: File): Promise<string> {
   });
 }
 
-function ImageSlot({ brand, kind, label, hint, onChange }: { brand: Brand; kind: BrandImageKind; label: string; hint: string; onChange: (b: Brand) => void }) {
-  const url = kind === "logo" ? brand.logoUrl : brand.signatureUrl;
+function ImageSlot({ brand, kind, label, hint, onChange, onUploaded }: { brand: Brand; kind: BrandImageKind; label: string; hint: string; onChange: (b: Brand) => void; onUploaded?: (file: File) => void }) {
+  const url = kind === "logo" ? brand.logoUrl : kind === "icon" ? brand.iconUrl : brand.signatureUrl;
   const input = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -51,8 +53,10 @@ function ImageSlot({ brand, kind, label, hint, onChange }: { brand: Brand; kind:
     setBusy(true);
     try {
       const r = await crmApi.brands.setImage(brand.id, kind, await readImage(file));
-      if (r.ok) onChange(r.data);
-      else setError(r.fieldErrors.image ?? r.message);
+      if (r.ok) {
+        onChange(r.data);
+        onUploaded?.(file);
+      } else setError(r.fieldErrors.image ?? r.message);
     } catch {
       setError("The file could not be read. Try another image.");
     } finally {
@@ -73,7 +77,7 @@ function ImageSlot({ brand, kind, label, hint, onChange }: { brand: Brand; kind:
     <div className="flex flex-col gap-2">
       <span id={`${id}-label`} className="text-[14px] font-semibold">{label}</span>
       <div className="flex items-center gap-3">
-        <div className={`flex shrink-0 items-center justify-center overflow-hidden rounded-xl border border-line bg-canvas ${kind === "logo" ? "size-16" : "h-16 w-32"}`}>
+        <div className={`flex shrink-0 items-center justify-center overflow-hidden rounded-xl border border-line bg-canvas ${kind === "signature" ? "h-16 w-32" : kind === "logo" ? "h-16 w-28" : "size-16"}`}>
           {/* eslint-disable-next-line @next/next/no-img-element -- same-origin image from the API, versioned URL */}
           {url ? <img src={url} alt={`${brand.name} ${label.toLowerCase()}`} className="max-h-full max-w-full object-contain" /> : <ImagePlus size={20} className="text-muted" aria-hidden="true" />}
         </div>
@@ -133,6 +137,21 @@ export function BrandsView() {
     setSaved("");
   };
 
+  function setColor(v: string) {
+    setForm((x) => ({ ...x, color: v }));
+    setErrors((x) => ({ ...x, color: undefined }));
+    setSaved("");
+  }
+
+  /** A new icon: when the brand has no colour yet, take the icon's main colour (saved with the next "Save changes"). */
+  async function iconUploaded(file: File) {
+    if (form.color) return;
+    const picked = await dominantColor(file);
+    if (!picked) return;
+    setForm((x) => (x.color ? x : { ...x, color: picked }));
+    setSaved(`Brand colour ${picked} picked from the icon. Click Save changes to keep it.`);
+  }
+
   function edit(id: string) {
     const b = brands.find((x) => x.id === id);
     if (!b) return;
@@ -152,6 +171,7 @@ export function BrandsView() {
     setErrors(r.errors);
     const first = FIELDS.find((f) => r.errors[f.key]);
     if (first) return focus(first.key);
+    if (r.errors.color) return focus("color");
     saving.current = true;
     setBusy(true);
     setFormError("");
@@ -165,7 +185,7 @@ export function BrandsView() {
       // Stay on the brand so its logo and signature can be added straight away.
       setEditingId(result.data.id);
       setForm(toProfile(result.data));
-      setSaved(editingId ? "Changes saved." : "Brand added. You can now upload its logo and signature.");
+      setSaved(editingId ? "Changes saved." : "Brand added. You can now upload its logo, icon and signature.");
       return;
     }
     const fe = result.fieldErrors as BrandErrors;
@@ -191,12 +211,18 @@ export function BrandsView() {
                 <article aria-label={b.name} className="flex items-start gap-4">
                   <div className="flex size-14 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-line bg-canvas">
                     {/* eslint-disable-next-line @next/next/no-img-element -- same-origin image from the API, versioned URL */}
-                    {b.logoUrl ? <img src={b.logoUrl} alt={`${b.name} logo`} className="max-h-full max-w-full object-contain" /> : <span className="text-[18px] font-bold text-muted" aria-hidden="true">{b.name.slice(0, 1).toUpperCase()}</span>}
+                    {b.iconUrl ? <img src={b.iconUrl} alt={`${b.name} icon`} className="max-h-full max-w-full object-contain" />
+                      // eslint-disable-next-line @next/next/no-img-element -- same-origin image from the API, versioned URL
+                      : b.logoUrl ? <img src={b.logoUrl} alt={`${b.name} logo`} className="max-h-full max-w-full object-contain" />
+                      : <span className="text-[18px] font-bold text-muted" aria-hidden="true">{b.name.slice(0, 1).toUpperCase()}</span>}
                   </div>
                   <div className="min-w-0 flex-1">
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
-                        <h3 className="break-words text-[16px] font-semibold">{b.name}</h3>
+                        <h3 className="flex items-center gap-2 break-words text-[16px] font-semibold">
+                          {b.name}
+                          <span title={`Brand colour ${b.color || `${DEFAULT_BRAND_COLOR} (default)`}`} className="inline-block size-3.5 shrink-0 rounded-full border border-black/10" style={{ backgroundColor: b.color || DEFAULT_BRAND_COLOR }} />
+                        </h3>
                         {b.tagline && <p className="text-[13.5px] italic text-muted">{b.tagline}</p>}
                       </div>
                       <button type="button" onClick={() => edit(b.id)} aria-label={`Edit ${b.name}`}
@@ -238,13 +264,30 @@ export function BrandsView() {
               <TextField key={f.key} id={`brand-${f.key}`} label={f.key === "name" ? f.label : `${f.label} (optional)`} value={form[f.key]} placeholder={f.placeholder} error={errors[f.key]}
                 onChange={(v) => { setForm((x) => ({ ...x, [f.key]: stripControlChars(v) })); setErrors((x) => ({ ...x, [f.key]: undefined })); setSaved(""); }} />
             ))}
+            <div className="flex flex-col gap-1.5">
+              <label htmlFor="brand-color" className="text-[14px] font-semibold">Brand colour (optional)</label>
+              <div className="flex flex-wrap items-center gap-2.5">
+                <input type="color" aria-label="Pick the brand colour" value={/^#[0-9A-F]{6}$/i.test(form.color) ? form.color : DEFAULT_BRAND_COLOR}
+                  onChange={(e) => setColor(e.target.value.toUpperCase())}
+                  className="h-11 w-14 cursor-pointer rounded-lg border border-line bg-white p-1" />
+                <input id="brand-color" type="text" value={form.color} placeholder={`${DEFAULT_BRAND_COLOR} (default)`} maxLength={7} spellCheck={false} autoComplete="off"
+                  onChange={(e) => setColor(stripControlChars(e.target.value))} aria-invalid={errors.color ? true : undefined} aria-describedby="brand-color-hint"
+                  className={`min-h-11 w-36 rounded-xl border px-3 font-mono text-[15px] uppercase outline-none focus:border-navy ${errors.color ? "border-[#C62828]" : "border-line"}`} />
+                {form.color && (
+                  <button type="button" onClick={() => setColor("")} className="min-h-10 rounded-xl px-3 text-[14px] font-semibold text-navy hover:bg-canvas">Use default</button>
+                )}
+              </div>
+              <p id="brand-color-hint" className="text-[12.5px] text-muted">Used on this brand&apos;s certificates and stamp. Uploading an icon picks its main colour when none is set.</p>
+              {errors.color && <p role="alert" className="text-[13.5px] text-[#C62828]">{errors.color}</p>}
+            </div>
             {editing ? (
               <div className="flex flex-col gap-4 border-t border-line pt-4">
-                <ImageSlot brand={editing} kind="logo" label="Logo" hint="PNG, JPEG or WebP, up to 500 KB. A square image works best." onChange={replace} />
+                <ImageSlot brand={editing} kind="logo" label="Logo" hint="The full logo (wordmark). PNG, JPEG or WebP, up to 500 KB." onChange={replace} />
+                <ImageSlot brand={editing} kind="icon" label="Icon" hint="A square app-style mark, used on certificates and stamps. Its main colour becomes the brand colour if none is set." onChange={replace} onUploaded={iconUploaded} />
                 <ImageSlot brand={editing} kind="signature" label="Director's signature" hint="PNG, JPEG or WebP, up to 500 KB. A signature on a white or transparent background." onChange={replace} />
               </div>
             ) : (
-              <p className="text-[13px] text-muted">The logo and the director&apos;s signature can be uploaded once the brand is added.</p>
+              <p className="text-[13px] text-muted">The logo, icon and the director&apos;s signature can be uploaded once the brand is added.</p>
             )}
             {formError && <p role="alert" className="text-[14px] text-[#C62828]">{formError}</p>}
             {saved && <p role="status" className="text-[14px] text-[#1B5E20]">{saved}</p>}

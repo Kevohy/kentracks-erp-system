@@ -10,7 +10,7 @@ import { brandImages, brands } from "./schema";
 type Db = ReturnType<typeof getDb>;
 type Row = typeof brands.$inferSelect;
 const DUPLICATE = "A brand with this name already exists";
-const KINDS: readonly BrandImageKind[] = ["logo", "signature"];
+const KINDS: readonly BrandImageKind[] = ["logo", "icon", "signature"];
 export const isBrandImageKind = (v: string): v is BrandImageKind => (KINDS as readonly string[]).includes(v);
 
 const imageUrl = (brandId: string, kind: BrandImageKind, at: Date | undefined) =>
@@ -25,7 +25,9 @@ const toBrand = (r: Row, images: Map<string, Date>): Brand => ({
   website: r.website,
   location: r.location,
   directorName: r.directorName,
+  color: r.color,
   logoUrl: imageUrl(r.id, "logo", images.get(`${r.id}:logo`)),
+  iconUrl: imageUrl(r.id, "icon", images.get(`${r.id}:icon`)),
   signatureUrl: imageUrl(r.id, "signature", images.get(`${r.id}:signature`)),
 });
 
@@ -129,7 +131,7 @@ function sniff(b: Buffer): "image/png" | "image/jpeg" | "image/webp" | null {
   return null;
 }
 
-const KIND_LABEL: Record<BrandImageKind, string> = { logo: "Logo", signature: "Signature" };
+const KIND_LABEL: Record<BrandImageKind, string> = { logo: "Logo", icon: "Icon", signature: "Signature" };
 
 /** Largest request body for an image upload: 500 KB of image as base64, plus a little JSON. */
 export const BRAND_IMAGE_BODY_BYTES = Math.ceil(MAX_BRAND_IMAGE_BYTES / 3) * 4 + 1024;
@@ -140,7 +142,7 @@ async function ownBrand(db: Db, ctx: AuthContext, id: string): Promise<boolean> 
   return !!r;
 }
 
-/** PUT …/brands/{id}/images/{kind} { image: "data:image/png;base64,…" } — sets the logo or the director's signature. */
+/** PUT …/brands/{id}/images/{kind} { image: "data:image/png;base64,…" } — sets the logo, the icon or the director's signature. */
 export async function setBrandImage(ctx: AuthContext, id: string, kind: BrandImageKind, body: Record<string, unknown>): Promise<Brand | null> {
   requireAdmin(ctx, "add or change brands");
   const extra = Object.keys(body).filter((k) => k !== "image");
@@ -161,7 +163,7 @@ export async function setBrandImage(ctx: AuthContext, id: string, kind: BrandIma
   return (await loadBrands(db, ctx.tenantId)).find((b) => b.id === id) ?? null;
 }
 
-/** DELETE …/brands/{id}/images/{kind} — removes the logo or the signature. */
+/** DELETE …/brands/{id}/images/{kind} — removes the logo, the icon or the signature. */
 export async function removeBrandImage(ctx: AuthContext, id: string, kind: BrandImageKind): Promise<Brand | null> {
   requireAdmin(ctx, "add or change brands");
   const db = getDb();
