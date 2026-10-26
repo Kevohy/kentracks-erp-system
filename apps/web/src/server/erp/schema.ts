@@ -1,6 +1,6 @@
 import { sql } from "drizzle-orm";
 import { bigint, boolean, check, date, index, integer, numeric, pgEnum, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
-import { customers, suppliers, technicians, tenants } from "../crm/schema";
+import { brands, customers, suppliers, technicians, tenants } from "../crm/schema";
 
 /**
  * Inventory, Purchases and Sales schema, derived from the frontend models in
@@ -738,4 +738,144 @@ export const smsReminderSettings = pgTable(
     lastRunNote: text("last_run_note"),
   },
   (t) => [check("sms_reminder_settings_hour", sql`${t.sendHour} BETWEEN 6 AND 20`)],
+);
+
+/**
+ * Documents → Certificates: a vehicle tracking certificate, the proof that a tracker was installed in a vehicle.
+ * Numbered per company (e.g. KT-2026-00001). The customer, device, vehicle and brand details are copied in when it is
+ * issued, so a certificate keeps saying what it said on the day even if the sale, customer or brand changes later.
+ */
+export const certificates = pgTable(
+  "certificates",
+  {
+    id: id(),
+    tenantId: tenantId(),
+    number: text("number").notNull(),
+    saleId: uuid("sale_id").notNull().references(() => sales.id, { onDelete: "restrict" }),
+    customerId: uuid("customer_id").notNull().references(() => customers.id, { onDelete: "restrict" }),
+    brandId: uuid("brand_id").notNull().references(() => brands.id, { onDelete: "restrict" }),
+    customerName: text("customer_name").notNull(),
+    customerPhone: text("customer_phone").notNull().default(""),
+    customerAccount: text("customer_account").notNull().default(""),
+    customerEmail: text("customer_email").notNull().default(""),
+    customerLocation: text("customer_location").notNull().default(""),
+    /** Random code printed on the certificate and in its QR code; /verify/{code} confirms the certificate publicly. */
+    verifyCode: text("verify_code").notNull(),
+    platformName: text("platform_name").notNull().default(""),
+    simName: text("sim_name").notNull().default(""),
+    imei: text("imei").notNull(),
+    deviceModel: text("device_model").notNull().default(""),
+    simNumber: text("sim_number").notNull().default(""),
+    technicianName: text("technician_name").notNull().default(""),
+    vehicleReg: text("vehicle_reg").notNull(),
+    make: text("make").notNull(),
+    model: text("model").notNull(),
+    year: integer("year").notNull(),
+    chassis: text("chassis").notNull(),
+    /** 1-5 years, or null for Lifetime. */
+    contractYears: integer("contract_years"),
+    installedOn: date("installed_on").notNull(),
+    /** installedOn + contractYears; null for Lifetime. */
+    validUntil: date("valid_until"),
+    /** The brand as it was when issued. */
+    brandName: text("brand_name").notNull(),
+    brandTagline: text("brand_tagline").notNull().default(""),
+    brandPhone: text("brand_phone").notNull().default(""),
+    brandEmail: text("brand_email").notNull().default(""),
+    brandWebsite: text("brand_website").notNull().default(""),
+    brandLocation: text("brand_location").notNull().default(""),
+    directorName: text("director_name").notNull().default(""),
+    issuedBy: uuid("issued_by"),
+    issuedAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex("certificates_tenant_number_uq").on(t.tenantId, t.number),
+    uniqueIndex("certificates_verify_code_uq").on(t.verifyCode),
+    check("certificates_verify_code", sql`${t.verifyCode} ~ '^[A-Z0-9]{10}$'`),
+    index("certificates_tenant_issued_idx").on(t.tenantId, t.issuedAt),
+    index("certificates_sale_idx").on(t.tenantId, t.saleId),
+    check("certificates_imei", sql`${t.imei} ~ '^[0-9]{15}$'`),
+    check("certificates_year", sql`${t.year} BETWEEN 1950 AND 2100`),
+    check("certificates_contract", sql`${t.contractYears} IS NULL OR ${t.contractYears} BETWEEN 1 AND 5`),
+    check("certificates_text_len", sql`char_length(${t.vehicleReg}) BETWEEN 1 AND 20 AND char_length(${t.make}) BETWEEN 1 AND 40 AND char_length(${t.model}) BETWEEN 1 AND 40 AND char_length(${t.chassis}) BETWEEN 1 AND 30`),
+  ],
+);
+
+/**
+ * Documents → Invoices. Numbered per company and year (INV-2026-000013). The customer, brand and payment details are
+ * copied in when the invoice is created, so it keeps saying what it said on the day. Amounts in minor units (cents).
+ */
+export const invoices = pgTable(
+  "invoices",
+  {
+    id: id(),
+    tenantId: tenantId(),
+    number: text("number").notNull(),
+    /** Random code printed in the QR code; /verify/{code} confirms the invoice publicly. */
+    verifyCode: text("verify_code").notNull(),
+    customerId: uuid("customer_id").notNull().references(() => customers.id, { onDelete: "restrict" }),
+    brandId: uuid("brand_id").notNull().references(() => brands.id, { onDelete: "restrict" }),
+    title: text("title").notNull(),
+    invoiceDate: date("invoice_date").notNull(),
+    dueDate: date("due_date").notNull(),
+    status: text("status").notNull().default("Unpaid"),
+    paymentMethod: text("payment_method").notNull().default(""),
+    paymentDetails: text("payment_details").notNull().default(""),
+    vat: boolean("vat").notNull().default(false),
+    /** Percent, e.g. 16. */
+    vatRate: integer("vat_rate").notNull().default(16),
+    itemsMinor: money("items_minor").notNull(),
+    expensesMinor: money("expenses_minor").notNull(),
+    vatMinor: money("vat_minor").notNull(),
+    totalMinor: money("total_minor").notNull(),
+    customerName: text("customer_name").notNull(),
+    customerPhone: text("customer_phone").notNull().default(""),
+    customerEmail: text("customer_email").notNull().default(""),
+    customerLocation: text("customer_location").notNull().default(""),
+    brandName: text("brand_name").notNull(),
+    brandTagline: text("brand_tagline").notNull().default(""),
+    brandPhone: text("brand_phone").notNull().default(""),
+    brandEmail: text("brand_email").notNull().default(""),
+    brandWebsite: text("brand_website").notNull().default(""),
+    brandLocation: text("brand_location").notNull().default(""),
+    directorName: text("director_name").notNull().default(""),
+    createdBy: uuid("created_by"),
+    createdAt: createdAt(),
+    paidAt: timestamp("paid_at", { withTimezone: true }),
+  },
+  (t) => [
+    uniqueIndex("invoices_tenant_number_uq").on(t.tenantId, t.number),
+    uniqueIndex("invoices_verify_code_uq").on(t.verifyCode),
+    index("invoices_tenant_created_idx").on(t.tenantId, t.createdAt),
+    index("invoices_customer_idx").on(t.tenantId, t.customerId),
+    check("invoices_status", sql`${t.status} IN ('Unpaid', 'Paid')`),
+    check("invoices_verify_code", sql`${t.verifyCode} ~ '^[A-Z0-9]{10}$'`),
+    check("invoices_dates", sql`${t.dueDate} >= ${t.invoiceDate}`),
+    check("invoices_vat_rate", sql`${t.vatRate} BETWEEN 0 AND 100`),
+    check("invoices_amounts", sql`${t.itemsMinor} >= 0 AND ${t.expensesMinor} >= 0 AND ${t.vatMinor} >= 0 AND ${t.totalMinor} = ${t.itemsMinor} + ${t.expensesMinor} + ${t.vatMinor}`),
+    check("invoices_text_len", sql`char_length(${t.title}) BETWEEN 1 AND 120 AND char_length(${t.paymentMethod}) <= 40 AND char_length(${t.paymentDetails}) <= 200`),
+  ],
+);
+
+/** The lines of an invoice: items (products, services, sales) and expenses. */
+export const invoiceLines = pgTable(
+  "invoice_lines",
+  {
+    id: id(),
+    invoiceId: uuid("invoice_id").notNull().references(() => invoices.id, { onDelete: "cascade" }),
+    tenantId: tenantId(),
+    position: integer("position").notNull(),
+    kind: text("kind").notNull(),
+    /** Set when the line was added from one of the customer's sales. */
+    saleId: uuid("sale_id").references(() => sales.id, { onDelete: "set null" }),
+    name: text("name").notNull(),
+    quantity: numeric("quantity", { precision: 10, scale: 2, mode: "number" }).notNull(),
+    unitPriceMinor: money("unit_price_minor").notNull(),
+    totalMinor: money("total_minor").notNull(),
+  },
+  (t) => [
+    index("invoice_lines_invoice_idx").on(t.invoiceId, t.position),
+    check("invoice_lines_kind", sql`${t.kind} IN ('item', 'expense')`),
+    check("invoice_lines_values", sql`char_length(${t.name}) BETWEEN 1 AND 160 AND ${t.quantity} > 0 AND ${t.unitPriceMinor} >= 0 AND ${t.totalMinor} >= 0`),
+  ],
 );

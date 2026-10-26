@@ -121,3 +121,67 @@
     text-align: center;
   }
 }
+
+/* Documents → Certificates: print only the certificate, full size, on one A4 page with its colours. */
+@media print {
+  @page {
+    size: A4 portrait;
+    margin: 0;
+  }
+  html,
+  body {
+    background: #fff !important;
+  }
+  body * {
+    visibility: hidden !important;
+  }
+  .certificate-print-area,
+  .certificate-print-area * {
+    visibility: visible !important;
+  }
+  .certificate-print-area {
+    position: fixed !important;
+    inset: 0 !important;
+    width: 210mm !important;
+  }
+  .certificate-frame {
+    width: 794px !important;
+    height: 1123px !important;
+    margin: 0 !important;
+  }
+  .certificate-scale {
+    transform: none !important;
+  }
+  .certificate {
+    box-shadow: none !important;
+  }
+}
+
+/* Documents → Invoices: print only the invoice, full size; a long invoice continues on further A4 pages. */
+@media print {
+  .invoice-print-area,
+  .invoice-print-area * {
+    visibility: visible !important;
+  }
+  .invoice-print-area {
+    position: absolute !important;
+    top: 0 !important;
+    left: 0 !important;
+    width: 210mm !important;
+  }
+  .invoice-frame {
+    width: 794px !important;
+    height: auto !important;
+    margin: 0 !important;
+    overflow: visible !important;
+  }
+  .invoice-scale {
+    transform: none !important;
+  }
+  .invoice {
+    box-shadow: none !important;
+  }
+  .invoice [data-keep] {
+    break-inside: avoid;
+  }
+}

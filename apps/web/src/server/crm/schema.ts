@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { check, index, pgEnum, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { check, customType, index, integer, pgEnum, pgTable, primaryKey, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 
 /**
  * CRM schema, derived from the frontend models in src/lib/{customers,suppliers,technicians}.ts
@@ -30,11 +30,48 @@ export const brands = pgTable(
     id: id(),
     tenantId: tenantId(),
     name: text("name").notNull(),
+    /** Brand profile, used on documents (certificates, invoices, quotations). All optional: '' when not set. */
+    tagline: text("tagline").notNull().default(""),
+    phone: text("phone").notNull().default(""),
+    email: text("email").notNull().default(""),
+    website: text("website").notNull().default(""),
+    location: text("location").notNull().default(""),
+    directorName: text("director_name").notNull().default(""),
+    /** The brand's colour (#RRGGBB) for its certificates and stamp; '' uses the default red. */
+    color: text("color").notNull().default(""),
     createdAt: createdAt(),
+    updatedAt: updatedAt(),
   },
   (t) => [
     uniqueIndex("brands_tenant_name_uq").on(t.tenantId, sql`lower(${t.name})`),
     check("brands_name_len", sql`char_length(${t.name}) BETWEEN 1 AND 40`),
+    check("brands_profile_len", sql`char_length(${t.tagline}) <= 120 AND char_length(${t.website}) <= 200 AND char_length(${t.location}) <= 200 AND char_length(${t.directorName}) <= 80`),
+    check("brands_phone", sql`${t.phone} = '' OR ${t.phone} ~ '^[+][1-9][0-9]{6,14}$'`),
+    check("brands_email", sql`${t.email} = '' OR (char_length(${t.email}) <= 254 AND ${t.email} ~ '^[^[:space:]@]+@[^[:space:]@]+[.][^[:space:]@]{2,}$')`),
+    check("brands_website", sql`${t.website} = '' OR ${t.website} ~ '^https?://[^[:space:]]+$'`),
+    check("brands_color", sql`${t.color} = '' OR ${t.color} ~ '^#[0-9A-F]{6}$'`),
+  ],
+);
+
+const bytea = customType<{ data: Buffer; driverData: Buffer }>({ dataType: () => "bytea" });
+
+/** A brand's logo, square icon and its director's signature: PNG, JPEG or WebP, at most 500 KB each. Kept apart so brand lists stay small. */
+export const brandImages = pgTable(
+  "brand_images",
+  {
+    brandId: uuid("brand_id").notNull().references(() => brands.id, { onDelete: "cascade" }),
+    tenantId: tenantId(),
+    kind: text("kind").notNull(),
+    mime: text("mime").notNull(),
+    bytes: integer("bytes").notNull(),
+    data: bytea("data").notNull(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.brandId, t.kind] }),
+    check("brand_images_kind", sql`${t.kind} IN ('logo', 'icon', 'signature')`),
+    check("brand_images_mime", sql`${t.mime} IN ('image/png', 'image/jpeg', 'image/webp')`),
+    check("brand_images_size", sql`${t.bytes} BETWEEN 1 AND 512000 AND octet_length(${t.data}) = ${t.bytes}`),
   ],
 );
 
