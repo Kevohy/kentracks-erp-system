@@ -93,8 +93,8 @@ export const navigation: NavItem[] = [
     label: "Documents",
     icon: FileText,
     children: [
-      { label: "Certificates", href: "/documents/certificates" },
-      { label: "Invoices", href: "/documents/invoices" },
+      { label: "Certificates", href: "/documents/certificates", built: true },
+      { label: "Invoices", href: "/documents/invoices", built: true },
       { label: "Quotations", href: "/documents/quotations" },
     ],
   },

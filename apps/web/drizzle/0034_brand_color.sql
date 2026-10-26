@@ -1,0 +1,2 @@
+ALTER TABLE "brands" ADD COLUMN "color" text DEFAULT '' NOT NULL;--> statement-breakpoint
+ALTER TABLE "brands" ADD CONSTRAINT "brands_color" CHECK ("brands"."color" = '' OR "brands"."color" ~ '^#[0-9A-F]{6}$');

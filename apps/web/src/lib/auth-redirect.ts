@@ -1,5 +1,6 @@
 /** Pages that may be visited while signed out. Everything else needs a session. */
-export const PUBLIC_PAGES = ["/login", "/forgot-password"] as const;
+/** /verify/{code} is the certificate check a QR code opens: it shows no contact details (see checkCertificate). */
+export const PUBLIC_PAGES = ["/login", "/forgot-password", "/verify"] as const;
 
 /**
  * Turns a "return to" value from the address bar into a safe path inside this app, or the fallback.

@@ -26,6 +26,13 @@ export function validateWebsite(raw: string): { value: string; error?: string } 
   return { value };
 }
 
+/** A colour: empty, or #RRGGBB (also accepts "ee1d21" or "#EE1D21"); saved in capitals. */
+export function validateColor(raw: string): { value: string; error?: string } {
+  const t = raw.trim().replace(/^#/, "").toUpperCase();
+  if (!t) return { value: "" };
+  return /^[0-9A-F]{6}$/.test(t) ? { value: `#${t}` } : { value: raw.trim(), error: "Pick a colour, or enter it as #RRGGBB, e.g. #EE1D21" };
+}
+
 /**
  * Validates a brand profile. The name is required and unique within the company (ignoring capitals); everything else
  * is optional. Phone numbers are saved as E.164 (Kenya by default), like customers' numbers.
@@ -47,6 +54,8 @@ export function validateBrand(
   const website = validateWebsite(draft.website ?? "");
   const phoneRaw = (draft.phone ?? "").trim();
   const phone = phoneRaw ? validatePhone(phoneRaw) : { value: "" };
+  const color = validateColor(draft.color ?? "");
+  if (color.error) errors.color = color.error;
   const emailRaw = (draft.email ?? "").trim();
   const email = emailRaw ? validateEmail(emailRaw) : { value: "" };
 
@@ -65,6 +74,7 @@ export function validateBrand(
     website: website.value,
     location: location.value,
     directorName: director.value,
+    color: color.value,
   };
   return { errors, value, name: n.value };
 }

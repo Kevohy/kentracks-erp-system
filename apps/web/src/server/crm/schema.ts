@@ -37,6 +37,8 @@ export const brands = pgTable(
     website: text("website").notNull().default(""),
     location: text("location").notNull().default(""),
     directorName: text("director_name").notNull().default(""),
+    /** The brand's colour (#RRGGBB) for its certificates and stamp; '' uses the default red. */
+    color: text("color").notNull().default(""),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -47,12 +49,13 @@ export const brands = pgTable(
     check("brands_phone", sql`${t.phone} = '' OR ${t.phone} ~ '^[+][1-9][0-9]{6,14}$'`),
     check("brands_email", sql`${t.email} = '' OR (char_length(${t.email}) <= 254 AND ${t.email} ~ '^[^[:space:]@]+@[^[:space:]@]+[.][^[:space:]@]{2,}$')`),
     check("brands_website", sql`${t.website} = '' OR ${t.website} ~ '^https?://[^[:space:]]+$'`),
+    check("brands_color", sql`${t.color} = '' OR ${t.color} ~ '^#[0-9A-F]{6}$'`),
   ],
 );
 
 const bytea = customType<{ data: Buffer; driverData: Buffer }>({ dataType: () => "bytea" });
 
-/** A brand's logo and its director's signature: PNG, JPEG or WebP, at most 500 KB each. Kept apart so brand lists stay small. */
+/** A brand's logo, square icon and its director's signature: PNG, JPEG or WebP, at most 500 KB each. Kept apart so brand lists stay small. */
 export const brandImages = pgTable(
   "brand_images",
   {
@@ -66,7 +69,7 @@ export const brandImages = pgTable(
   },
   (t) => [
     primaryKey({ columns: [t.brandId, t.kind] }),
-    check("brand_images_kind", sql`${t.kind} IN ('logo', 'signature')`),
+    check("brand_images_kind", sql`${t.kind} IN ('logo', 'icon', 'signature')`),
     check("brand_images_mime", sql`${t.mime} IN ('image/png', 'image/jpeg', 'image/webp')`),
     check("brand_images_size", sql`${t.bytes} BETWEEN 1 AND 512000 AND octet_length(${t.data}) = ${t.bytes}`),
   ],
