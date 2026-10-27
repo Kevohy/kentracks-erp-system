@@ -41,7 +41,8 @@ async function brandFrom(ctx: AuthContext, body: Record<string, unknown>, curren
 function columnsFrom(body: Record<string, unknown>, existingType?: CustomerType) {
   const { brandId: _brand, ...rest } = body;
   void _brand;
-  const type = parseType(rest, customerTypes, existingType);
+  // An existing customer may change type (e.g. End User → Distributor); the fields must then fit the new type.
+  const type = parseType(rest, customerTypes, existingType, true);
   const names = fieldsByType[type].map((f) => f.name).filter((n) => n !== "brandId");
   const clean = parseFields<FieldName>(rest, names, validateField);
   const contact = validateContact(clean.phone ?? "", clean.email ?? "");

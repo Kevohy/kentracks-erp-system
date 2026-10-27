@@ -107,6 +107,7 @@ export const navigation: NavItem[] = [
       { label: "Packages", href: "/settings/packages", built: true },
       { label: "Brands", href: "/settings/brands", built: true },
       { label: "Africa's Talking", href: "/settings/africastalking", built: true },
+      { label: "Server Monitoring", href: "/settings/monitoring", built: true },
     ],
   },
 ];

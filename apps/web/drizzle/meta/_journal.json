@@ -267,6 +267,20 @@
       "when": 1793110039871,
       "tag": "0037_gps_last_seen",
       "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1793114165443,
+      "tag": "0038_gps_status_at",
+      "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1793119301547,
+      "tag": "0039_row_level_security",
+      "breakpoints": true
     }
   ]
 }

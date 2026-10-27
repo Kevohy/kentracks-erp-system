@@ -1,6 +1,10 @@
+import { createHash } from "node:crypto";
 import { NextResponse, type NextRequest } from "next/server";
 import { PUBLIC_PAGES } from "@/lib/auth-redirect";
+import { clientIp } from "@/server/auth/rate-limit";
 import { readSessionToken, validateSession, SESSION_COOKIE } from "@/server/auth/session";
+import { countRequest } from "@/server/ops/metrics";
+import { bucketConfig, take } from "@/server/ops/token-bucket";
 
 /**
  * Route protection. Runs before every page and API request:
@@ -68,11 +72,35 @@ function nextWithCsp(req: NextRequest): NextResponse {
   return res;
 }
 
+/**
+ * API rate limit (token bucket, see src/server/ops/token-bucket.ts): per signed-in session, or per client address for
+ * the sign-in API when the address is known (behind a trusted proxy). The health check is never limited.
+ */
+function rateLimited(req: NextRequest, pathname: string, token: string | null): NextResponse | null {
+  if (pathname === "/api/health") return null;
+  const ip = token ? null : clientIp(req);
+  const key = token ? `s:${createHash("sha256").update(token).digest("base64url").slice(0, 22)}` : ip ? `ip:${ip}` : null;
+  if (!key) {
+    countRequest();
+    return null;
+  }
+  const cfg = bucketConfig();
+  const r = take(key, cfg);
+  countRequest(!r.allowed);
+  if (r.allowed) return null;
+  return NextResponse.json(
+    { error: `Too many requests. Please wait ${r.retryAfterSeconds} second${r.retryAfterSeconds === 1 ? "" : "s"} and try again.` },
+    { status: 429, headers: { "Cache-Control": "no-store", "Retry-After": String(r.retryAfterSeconds), "RateLimit-Limit": String(cfg.capacity), "RateLimit-Remaining": "0" } },
+  );
+}
+
 export async function proxy(req: NextRequest) {
   const { pathname, search } = req.nextUrl;
   const token = readSessionToken(req.headers);
 
   if (pathname.startsWith("/api/")) {
+    const limited = rateLimited(req, pathname, token);
+    if (limited) return limited;
     if (WRITES.has(req.method) && crossSite(req)) {
       return NextResponse.json({ error: "Request refused: it did not come from this app." }, { status: 403, headers: { "Cache-Control": "no-store" } });
     }

@@ -1,8 +1,10 @@
 import "server-only";
 import {
   GpsPlatformError,
+  kentracksTime,
   kentracksToRaw,
   normalizeGpsDevice,
+  trackStatusText,
   validateImei,
   type GpsPlatformClient,
   type KentracksDeviceRecord,
@@ -263,3 +265,38 @@ export async function verifyImeis(
   }
   return out;
 }
+
+/** A device's live status from the Track API alone. */
+export type LiveStatus = { status: "Online" | "Offline" | "Expired" | undefined; lastSeen: string | undefined };
+
+/**
+ * The live status of many devices (Track API only, no device details): what the Dashboard and Billing show as
+ * Online / Offline / Expired. The company's accounts are asked in turn (Kentracks first, then iTrack), 100 IMEIs per
+ * request, each for the IMEIs no earlier account answered for. IMEIs no account answers for are left out.
+ */
+export async function liveStatuses(tenantId: string, imeis: string[]): Promise<Map<string, LiveStatus>> {
+  const out = new Map<string, LiveStatus>();
+  const valid = [...new Set(imeis.filter((i) => !validateImei(i).error))];
+  if (!valid.length) return out;
+  for (const c of await allPlatformAccounts(tenantId)) {
+    const left = valid.filter((i) => !out.has(i));
+    if (!left.length) break;
+    for (let i = 0; i < left.length; i += KENTRACKS_BATCH) {
+      let recs: Map<string, KentracksTrackRecord>;
+      try {
+        recs = await track(c, left.slice(i, i + KENTRACKS_BATCH));
+      } catch {
+        break; // this account cannot be asked now; the next one may know the rest
+      }
+      for (const [imei, rec] of recs) {
+        const s = trackStatusText(rec.datastatus);
+        out.set(imei, {
+          status: s === "online" ? "Online" : s === "offline" ? "Offline" : s === "expired" ? "Expired" : undefined,
+          lastSeen: kentracksTime(Number(rec.hearttime) > 0 ? rec.hearttime : rec.gpstime, true),
+        });
+      }
+    }
+  }
+  return out;
+}
+
