@@ -43,6 +43,19 @@ export type DashboardStockItem = {
   quantity: number;
 };
 
+/** One point of the sales trend: a day ("YYYY-MM-DD") or a month ("YYYY-MM"). */
+export type DashboardTrendPoint = { key: string; count: number; totalMinor: number };
+
+/**
+ * The tracked devices by their GPS status, as in Billing → Customer Vehicles. Each device counts once: Expired first
+ * (licence date passed or the platform says expired; Lifelong cards never expire), then Online, Offline or Unknown.
+ */
+export type DashboardDevices = {
+  total: number; online: number; offline: number; expired: number; unknown: number; expiringSoon: number;
+  /** When a device's status was last checked on the GPS platform (ISO); null if never. */
+  checkedAt: string | null;
+};
+
 export type DashboardSummary = {
   /** When the figures were worked out (ISO). */
   asOf: string;
@@ -69,6 +82,11 @@ export type DashboardSummary = {
   recentSales: DashboardSale[];
   /** Items in stock or bought before, lowest quantity first. */
   stock: DashboardStockItem[];
+  /** Items at or below LOW_STOCK_UNITS (out of stock included). */
+  lowStockCount: number;
+  /** Sales (count and revenue, old sales left out): the last 30 days, and the last 12 months, oldest first. */
+  salesTrend: { days: DashboardTrendPoint[]; months: DashboardTrendPoint[] };
+  devices: DashboardDevices;
 };
 
 export const RENEWALS_SHOWN = 6;
@@ -76,7 +94,9 @@ export const RECENT_SALES_SHOWN = 5;
 export const STOCK_SHOWN = 6;
 /** At or below this many units an item is shown as low. */
 export const LOW_STOCK_UNITS = 5;
-export const DASHBOARD_REFRESH_SECONDS = 60;
+export const DASHBOARD_REFRESH_SECONDS = 30;
+export const TREND_DAYS = 30;
+export const TREND_MONTHS = 12;
 
 export const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"] as const;
 

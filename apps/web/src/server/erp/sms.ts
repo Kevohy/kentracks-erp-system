@@ -32,6 +32,7 @@ import {
 import { validatePhone } from "@/lib/validation";
 import { requireAdmin, type AuthContext } from "../crm/auth";
 import { getDb } from "../crm/db";
+import { asSystem, asTenant } from "../crm/db-scope";
 import { ApiError, isUuid, uniqueViolation } from "../crm/http";
 import { Reader, throwValidation, type Body } from "./body";
 import { billingDevices } from "./billing";
@@ -742,9 +743,10 @@ export async function runRemindersNow(ctx: AuthContext): Promise<ReminderRun & {
 export async function runAutomaticReminders(now = new Date()): Promise<void> {
   if (!textSmsConfigured()) return;
   const { hour, ymd } = nairobiParts(now);
-  const due = await getDb().execute<{ tenant_id: string; last_run_at: string | Date | null }>(sql`
-    SELECT tenant_id, last_run_at FROM sms_reminder_settings WHERE enabled AND send_hour <= ${hour}`);
-  for (const t of due.rows) {
+  // Which companies are due is a system question; each company's work then runs in that company only.
+  const due = await asSystem(() => getDb().execute<{ tenant_id: string; last_run_at: string | Date | null }>(sql`
+    SELECT tenant_id, last_run_at FROM sms_reminder_settings WHERE enabled AND send_hour <= ${hour}`));
+  for (const t of due.rows) await asTenant(t.tenant_id, async () => {
     // Once a day after the send hour, then every run picks up lines that became due later the same day.
     const ranToday = t.last_run_at ? nairobiParts(new Date(t.last_run_at)).ymd === ymd : false;
     const ctx: AuthContext = { tenantId: t.tenant_id, userId: "" };
@@ -758,5 +760,5 @@ export async function runAutomaticReminders(now = new Date()): Promise<void> {
     } catch (e) {
       console.error("[sms] automatic reminders failed for a company:", (e as Error).message);
     }
-  }
+  });
 }

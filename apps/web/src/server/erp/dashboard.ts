@@ -2,9 +2,12 @@ import "server-only";
 import { sql } from "drizzle-orm";
 import { EXPIRY_WINDOW_DAYS, normalizeDate } from "@/lib/billing";
 import {
+  LOW_STOCK_UNITS,
   RECENT_SALES_SHOWN,
   RENEWALS_SHOWN,
   STOCK_SHOWN,
+  TREND_DAYS,
+  TREND_MONTHS,
   type DashboardRenewal,
   type DashboardSale,
   type DashboardStockItem,
@@ -28,6 +31,8 @@ import { iotLines } from "./iot-sims";
  *    (Billing → IoT SIM, suspended lines left out) due in the next 30 days, plus those already expired.
  *  - Recent sales: the latest five.
  *  - Stock: received purchases minus what sales took out (the same figures as Inventory), lowest first.
+ *  - Sales trend: number of sales and revenue per day for the last 30 days and per month for the last 12 months.
+ *  - Devices: the tracked devices by GPS status, with the same rules as Billing (each device once, Expired first).
  */
 
 const local = (col: string) => sql.raw(`(${col} AT TIME ZONE 'Africa/Nairobi')`);
@@ -97,6 +102,37 @@ export async function dashboardSummary(ctx: AuthContext): Promise<DashboardSumma
       UNION ALL SELECT 'Platform', pl.id, pl.name, 'Licences' FROM platforms pl WHERE pl.tenant_id = ${t}`),
   ]);
 
+  const [daily, monthly, devices] = await Promise.all([
+    db.execute<{ key: string; count: number; total: string }>(sql`
+      WITH s AS (
+        SELECT ${saleAt}::date AS day, count(*)::int AS count, sum(s.total_minor) AS total FROM sales s
+        WHERE s.tenant_id = ${t} AND NOT s.old_sale AND ${saleAt} >= (${today} - ${TREND_DAYS - 1}::int)
+        GROUP BY 1)
+      SELECT to_char(d, 'YYYY-MM-DD') AS key, COALESCE(s.count, 0)::int AS count, COALESCE(s.total, 0)::text AS total
+      FROM generate_series(${today} - ${TREND_DAYS - 1}::int, ${today}, interval '1 day') d LEFT JOIN s ON s.day = d::date
+      ORDER BY d`),
+    db.execute<{ key: string; count: number; total: string }>(sql`
+      WITH s AS (
+        SELECT date_trunc('month', ${saleAt}) AS mo, count(*)::int AS count, sum(s.total_minor) AS total FROM sales s
+        WHERE s.tenant_id = ${t} AND NOT s.old_sale AND ${saleAt} >= date_trunc('month', ${nowLocal}) - make_interval(months => ${TREND_MONTHS - 1})
+        GROUP BY 1)
+      SELECT to_char(m.mo, 'YYYY-MM') AS key, COALESCE(s.count, 0)::int AS count, COALESCE(s.total, 0)::text AS total
+      FROM generate_series(date_trunc('month', ${nowLocal}) - make_interval(months => ${TREND_MONTHS - 1}), date_trunc('month', ${nowLocal}), interval '1 month') m(mo)
+      LEFT JOIN s ON s.mo = m.mo
+      ORDER BY m.mo`),
+    db.execute<{ total: number; online: number; offline: number; expired: number; unknown: number; soon: number; checked_at: Date | string | null }>(sql`
+      WITH v AS (${billingDevices(t)}),
+      x AS (SELECT v.*, COALESCE(v.card_type <> 'Lifelong Card' AND (v.expires < ${today} OR v.gps_status = 'Expired'), FALSE) AS dead FROM v)
+      SELECT count(*)::int AS total,
+             count(*) FILTER (WHERE NOT dead AND gps_status = 'Online')::int AS online,
+             count(*) FILTER (WHERE NOT dead AND gps_status = 'Offline')::int AS offline,
+             count(*) FILTER (WHERE dead)::int AS expired,
+             count(*) FILTER (WHERE NOT dead AND (gps_status IS NULL OR gps_status NOT IN ('Online', 'Offline')))::int AS unknown,
+             count(*) FILTER (WHERE NOT dead AND card_type <> 'Lifelong Card' AND expires BETWEEN ${today} AND ${today} + ${EXPIRY_WINDOW_DAYS}::int)::int AS soon,
+             max(GREATEST(gps_status_at, gps_synced_at)) AS checked_at
+      FROM x`),
+  ]);
+
   const m = money.rows[0];
   const year = m.year;
   const thisYear = Array<number>(12).fill(0);
@@ -122,14 +158,16 @@ export async function dashboardSummary(ctx: AuthContext): Promise<DashboardSumma
 
   // Stock per item: products and SIM cards as they are; platforms as one total (the rows without a card type).
   const nameOf = new Map(names.rows.map((r) => [`${r.kind}:${r.id}`, r]));
-  const items: DashboardStockItem[] = stock
+  const allItems: DashboardStockItem[] = stock
     .filter((r) => r.type !== "Platform" || r.cardType === undefined)
     .flatMap((r) => {
       const meta = nameOf.get(`${r.type}:${r.id}`);
       return meta ? [{ kind: r.type, id: r.id, name: meta.name, detail: meta.detail, quantity: r.quantity }] : [];
     })
-    .sort((a, b) => a.quantity - b.quantity || a.name.localeCompare(b.name))
-    .slice(0, STOCK_SHOWN);
+    .sort((a, b) => a.quantity - b.quantity || a.name.localeCompare(b.name));
+  const items = allItems.slice(0, STOCK_SHOWN);
+  const dv = devices.rows[0];
+  const point = (r: { key: string; count: number; total: string }) => ({ key: r.key, count: r.count, totalMinor: n(r.total) });
 
   const c = customers.rows[0];
   return {
@@ -158,5 +196,11 @@ export async function dashboardSummary(ctx: AuthContext): Promise<DashboardSumma
       paidMinor: n(r.paid),
     })),
     stock: items,
+    lowStockCount: allItems.filter((i) => i.quantity <= LOW_STOCK_UNITS).length,
+    salesTrend: { days: daily.rows.map(point), months: monthly.rows.map(point) },
+    devices: {
+      total: dv.total, online: dv.online, offline: dv.offline, expired: dv.expired, unknown: dv.unknown, expiringSoon: dv.soon,
+      checkedAt: dv.checked_at ? new Date(dv.checked_at).toISOString() : null,
+    },
   };
 }

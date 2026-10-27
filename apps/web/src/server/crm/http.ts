@@ -1,4 +1,6 @@
 import "server-only";
+import { countError } from "../ops/metrics";
+import { inRequestScope } from "./db-scope";
 
 /** An error that becomes a JSON response. `errors` maps form field names to messages. */
 export class ApiError extends Error {
@@ -45,6 +47,11 @@ type PgError = { code?: string; constraint?: string; message?: string };
 
 /** Runs a route handler and turns every failure into a safe JSON response (no SQL or stack traces leak). */
 export async function handle(fn: () => Promise<Response>): Promise<Response> {
+  // Every API request gets its own database scope; getAuthContext puts the user's company in it (row-level security).
+  return inRequestScope(() => handleInScope(fn));
+}
+
+async function handleInScope(fn: () => Promise<Response>): Promise<Response> {
   try {
     return await fn();
   } catch (e) {
@@ -66,6 +73,7 @@ export async function handle(fn: () => Promise<Response>): Promise<Response> {
       return json({ error: blockedDelete ? "This record is used by other records (for example a sale or purchase), so it cannot be deleted" : "A referenced record does not exist" }, 409);
     }
     console.error("[api] unexpected error:", e instanceof Error ? e.message : e);
+    countError();
     return json({ error: "Something went wrong. Please try again." }, 500);
   }
 }

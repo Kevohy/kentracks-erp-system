@@ -21,6 +21,7 @@ export type { StockRow } from "./purchases";
 import type { StockRow } from "./purchases";
 import type { Certificate, CertificateCustomer, CertificateDraft, CustomerVehicle } from "./certificates";
 import type { Invoice, InvoiceSale, InvoiceStatus } from "./invoices";
+import type { Monitoring } from "./monitoring";
 
 export const erpApi = {
   certificates: {
@@ -37,6 +38,9 @@ export const erpApi = {
     paymentDefaults: (brandId: string) => call<{ id: string; paymentMethod: string; paymentDetails: string }>("GET", `/api/invoices/payment-defaults/${brandId}`),
     create: (d: unknown) => call<Invoice>("POST", "/api/invoices", d),
     setStatus: (id: string, status: InvoiceStatus) => call<Invoice>("PUT", `/api/invoices/${id}`, { status }),
+  },
+  monitoring: {
+    get: () => call<Monitoring>("GET", "/api/settings/monitoring"),
   },
   textSms: {
     get: () => call<TextSmsStatus>("GET", "/api/settings/textsms"),

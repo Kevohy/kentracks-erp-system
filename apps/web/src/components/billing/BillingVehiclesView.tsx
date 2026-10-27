@@ -382,10 +382,10 @@ const filterLabel: Record<BillingFilter, string> = {
   All: "All devices", Online: "Online", Offline: "Offline", "Expiring soon": "Expiring soon", Expired: "Expired", Unknown: "Unknown status",
 };
 
-export function BillingVehiclesView() {
+export function BillingVehiclesView({ initialFilter = "All" }: { initialFilter?: BillingFilter }) {
   const [query, setQuery] = useState("");
   const [q, setQ] = useState("");
-  const [filter, setFilter] = useState<BillingFilter>("All");
+  const [filter, setFilter] = useState<BillingFilter>(initialFilter);
   const [items, setItems] = useState<BillingCustomer[]>([]);
   const [totals, setTotals] = useState<BillingTotals | null>(null);
   const [nextOffset, setNextOffset] = useState<number | null>(null);
@@ -426,7 +426,7 @@ export function BillingVehiclesView() {
     setItems((prev) => prev.map((c) => fresh.get(c.id) ?? c));
     setNotice(r.data.message ?? null);
     setUpdatedAt(new Date());
-    if (r.data.checked > 0) await refreshTotals();
+    if (r.data.checked > 0 && !live.current) await refreshTotals();
   }, [refreshTotals]);
 
   const fetchPage = useCallback(async (offset: number) => {
@@ -450,15 +450,30 @@ export function BillingVehiclesView() {
     void fetchPage(0);
   }, [fetchPage]);
 
-  // Live status: re-check the customers on screen every LIVE_REFRESH_SECONDS while the tab is visible.
+  // Live status: every LIVE_REFRESH_SECONDS while the tab is visible, and at once when it is shown again: re-check the
+  // customers on screen, and reload the totals (the server keeps every other device's status fresh in the background).
+  // Never two refreshes at once.
+  const live = useRef(false);
   useEffect(() => {
-    const t = setInterval(() => {
-      if (document.visibilityState !== "visible") return;
-      const ids = current.current.items.map((c) => c.id).slice(0, 50);
-      void sync(ids, false);
-    }, LIVE_REFRESH_SECONDS * 1000);
-    return () => clearInterval(t);
-  }, [sync]);
+    const tick = async () => {
+      if (document.visibilityState !== "visible" || live.current) return;
+      live.current = true;
+      try {
+        const ids = current.current.items.map((c) => c.id).slice(0, 50);
+        await Promise.all([sync(ids, false), refreshTotals()]);
+        setUpdatedAt(new Date());
+      } finally {
+        live.current = false;
+      }
+    };
+    const t = setInterval(() => void tick(), LIVE_REFRESH_SECONDS * 1000);
+    const onShow = () => void tick();
+    document.addEventListener("visibilitychange", onShow);
+    return () => {
+      clearInterval(t);
+      document.removeEventListener("visibilitychange", onShow);
+    };
+  }, [sync, refreshTotals]);
 
   const sentinel = useRef<HTMLDivElement>(null);
   useEffect(() => {

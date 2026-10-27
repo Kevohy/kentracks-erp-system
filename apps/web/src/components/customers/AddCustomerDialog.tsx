@@ -2,12 +2,15 @@
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { X } from "lucide-react";
-import { cn } from "@/lib/cn";
 import { defaultBrandId, type Brand } from "@/lib/brands";
 import type { SaveResult } from "@/lib/crm-api";
-import { customerTypes, type CustomerType } from "@/lib/customers";
-import { CustomerFields, type Values } from "./CustomerFields";
+import type { Customer, CustomerType } from "@/lib/customers";
+import { CustomerFields, CustomerTypePicker, switchType, type Values } from "./CustomerFields";
 import { useCustomerForm } from "./useCustomerForm";
+
+/** Full screen on phones; a centred card from tablet size up. */
+export const DIALOG =
+  "m-0 h-dvh max-h-dvh w-full max-w-none rounded-none border-0 bg-white p-0 text-ink backdrop:bg-ink/50 sm:m-auto sm:h-auto sm:w-[calc(100%-48px)] sm:max-w-[560px] sm:rounded-2xl sm:border sm:border-line sm:shadow-[0_24px_60px_rgba(10,29,44,0.25)]";
 
 export function AddCustomerDialog({
   open,
@@ -15,6 +18,7 @@ export function AddCustomerDialog({
   onAdd,
   brands,
   initial,
+  existing,
 }: {
   open: boolean;
   onClose: () => void;
@@ -22,10 +26,12 @@ export function AddCustomerDialog({
   brands: Brand[];
   /** Pre-filled values (for example the contact of a GPS device); the user can change everything. */
   initial?: { type?: CustomerType; values?: Values };
+  /** Customers already saved: a duplicate account, phone or email is caught while typing. */
+  existing?: Customer[];
 }) {
   const ref = useRef<HTMLDialogElement>(null);
   const [type, setType] = useState<CustomerType>("End User");
-  const form = useCustomerForm(ref);
+  const form = useCustomerForm(ref, { existing });
   const saving = useRef(false);
   const [busy, setBusy] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
@@ -71,13 +77,11 @@ export function AddCustomerDialog({
       ref={ref}
       onClose={onClose}
       aria-labelledby="add-customer-title"
-      className="m-auto w-[calc(100%-32px)] max-w-140 rounded-2xl border border-line bg-white p-0 text-ink shadow-[0_24px_60px_rgba(10,29,44,0.25)] backdrop:bg-ink/50"
+      className={DIALOG}
     >
-      <form onSubmit={submit} noValidate className="flex max-h-[calc(100dvh-32px)] flex-col">
-        <div className="flex items-center justify-between gap-3 border-b border-line px-5 py-4 sm:px-6">
-          <h2 id="add-customer-title" className="text-lg font-semibold">
-            Add Customer
-          </h2>
+      <form onSubmit={submit} noValidate className="flex h-full max-h-dvh flex-col sm:max-h-[calc(100dvh-48px)]">
+        <div className="flex items-center justify-between gap-3 border-b border-line px-4 py-3 sm:px-6 sm:py-4">
+          <h2 id="add-customer-title" className="text-lg font-semibold">New customer</h2>
           <button
             type="button"
             onClick={onClose}
@@ -88,36 +92,13 @@ export function AddCustomerDialog({
           </button>
         </div>
 
-        <div className="flex flex-col gap-5 overflow-y-auto px-5 py-5 sm:px-6">
-          <fieldset>
-            <legend className="mb-2 text-[13.5px] font-medium text-muted">Type of Customer</legend>
-            <div className="grid grid-cols-3 gap-1 rounded-xl bg-canvas p-1">
-              {customerTypes.map((t) => (
-                <label
-                  key={t}
-                  className={cn(
-                    "flex min-h-10 cursor-pointer items-center justify-center rounded-lg px-2 text-center text-[14.5px] font-medium has-focus-visible:outline-2 has-focus-visible:outline-navy",
-                    type === t ? "bg-white text-navy shadow-sm" : "text-muted",
-                  )}
-                >
-                  <input
-                    type="radio"
-                    name="customer-type"
-                    value={t}
-                    checked={type === t}
-                    onChange={() => {
-                      setType(t);
-                      form.reset(form.values);
-                    }}
-                    className="sr-only"
-                  />
-                  {t}
-                </label>
-              ))}
-            </div>
-          </fieldset>
+        <div className="flex flex-1 flex-col gap-5 overflow-y-auto px-4 py-5 sm:px-6">
+          <CustomerTypePicker name="customer-type" value={type} onChange={(t) => {
+            form.reset(switchType(form.values, type, t));
+            setType(t);
+          }} />
 
-          <CustomerFields type={type} values={form.values} errors={form.errors} onChange={form.change} onBlur={form.blur} brands={brands} idPrefix="cust-add" />
+          <CustomerFields type={type} values={form.values} errors={form.errors} valid={form.valid} onChange={form.change} onBlur={form.blur} brands={brands} idPrefix="cust-add" />
           {formError && (
             <p role="alert" className="text-[13.5px] text-[#C62828]">
               {formError}
@@ -125,16 +106,16 @@ export function AddCustomerDialog({
           )}
         </div>
 
-        <div className="flex justify-end gap-3 border-t border-line px-5 py-4 sm:px-6">
+        <div className="grid grid-cols-2 gap-3 border-t border-line bg-white px-4 py-3 pb-[calc(12px+env(safe-area-inset-bottom))] sm:flex sm:justify-end sm:px-6 sm:py-4">
           <button
             type="button"
             onClick={onClose}
-            className="min-h-11 rounded-xl border border-line px-4 text-[15px] font-semibold hover:bg-canvas"
+            className="min-h-12 rounded-xl border border-line px-4 text-[15px] font-semibold hover:bg-canvas sm:min-h-11"
           >
             Cancel
           </button>
-          <button type="submit" disabled={busy} className="min-h-11 rounded-xl bg-brand px-5 text-[15px] font-semibold text-white hover:brightness-95 disabled:opacity-60">
-            {busy ? "Saving…" : "Save Customer"}
+          <button type="submit" disabled={busy} className="min-h-12 rounded-xl bg-brand px-5 text-[15px] font-semibold text-white hover:brightness-95 disabled:opacity-60 sm:min-h-11">
+            {busy ? "Saving…" : "Save customer"}
           </button>
         </div>
       </form>
