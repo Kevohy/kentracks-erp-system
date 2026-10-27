@@ -1,5 +1,5 @@
 import { parseMoney } from "./purchase-validation";
-import { cleanText, stripControlChars } from "./validation";
+import { cleanText, stripControlChars, validatePhone } from "./validation";
 
 /** Documents → Invoices. Amounts are minor units (cents). */
 
@@ -7,7 +7,84 @@ export const VAT_RATE = 16;
 export const MAX_LINES = 40;
 export const INVOICE_STATUSES = ["Unpaid", "Paid"] as const;
 export type InvoiceStatus = (typeof INVOICE_STATUSES)[number];
-export const PAYMENT_METHODS = ["Paybill", "Till number", "Bank transfer", "Cash", "Cheque"] as const;
+
+/**
+ * How the customer can pay, printed on the invoice. One of the three is chosen (or none); each is copied into the invoice
+ * when it is created, so the invoice keeps saying what it said on the day.
+ */
+export type PaymentOptions = {
+  paybill: { business: string; account: string; accountName: string } | null;
+  sendMoney: { phone: string; name: string } | null;
+  bank: { accountName: string; accountNo: string; bankName: string; branch: string; bankCode: string; swift: string } | null;
+};
+export const NO_PAYMENT_OPTIONS: PaymentOptions = { paybill: null, sendMoney: null, bank: null };
+/** The company's payment details, offered on a new invoice (each can be edited). The Paybill account is the customer's account number. */
+export const DEFAULT_PAYBILL = { business: "4140445", accountName: "KENTRACKS TECHNOLOGIES LTD" };
+export const DEFAULT_BANK = {
+  accountName: "KENTRACKS TECHNOLOGIES LTD", accountNo: "1342643607", bankName: "KCB BANK", branch: "KERICHO BRANCH", bankCode: "01-106", swift: "KCBLKENX",
+};
+export const PAYMENT_OPTION_NAMES = { paybill: "M-Pesa Paybill", sendMoney: "Send Money", bank: "Bank" } as const;
+
+/** The payment options as stored (jsonb): anything missing or malformed is left out. */
+export function readPaymentOptions(raw: unknown): PaymentOptions {
+  const o = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+  const obj = (v: unknown, keys: string[]) => {
+    if (!v || typeof v !== "object") return null;
+    const r = v as Record<string, unknown>;
+    return keys.every((k) => typeof r[k] === "string") ? Object.fromEntries(keys.map((k) => [k, r[k] as string])) : null;
+  };
+  return {
+    paybill: obj(o.paybill, ["business", "account", "accountName"]) as PaymentOptions["paybill"],
+    sendMoney: obj(o.sendMoney, ["phone", "name"]) as PaymentOptions["sendMoney"],
+    bank: obj(o.bank, ["accountName", "accountNo", "bankName", "branch", "bankCode", "swift"]) as PaymentOptions["bank"],
+  };
+}
+
+/** Checks the payment options (at most one). Error keys are "method", "paybill.business", "sendMoney.phone", "bank.accountNo" and so on. */
+export function validatePaymentOptions(p: PaymentOptions): { value: PaymentOptions; errors: Record<string, string> } {
+  const errors: Record<string, string> = {};
+  // One payment method per invoice, so the customer is never shown two ways to pay.
+  if ([p.paybill, p.sendMoney, p.bank].filter(Boolean).length > 1) errors.method = "Choose one payment method";
+  const text = (key: string, raw: string, label: string, max: number, required = true) => {
+    const v = cleanText(raw);
+    if (!v && required) errors[key] = `Enter the ${label}`;
+    else if (v.length > max) errors[key] = `Keep it under ${max} characters`;
+    return v;
+  };
+  let paybill: PaymentOptions["paybill"] = null;
+  if (p.paybill) {
+    const business = cleanText(p.paybill.business).replace(/\s/g, "");
+    if (!business) errors["paybill.business"] = "Enter the Paybill number";
+    else if (!/^\d{5,8}$/.test(business)) errors["paybill.business"] = "A Paybill number has 5 to 8 digits";
+    paybill = { business, account: text("paybill.account", p.paybill.account, "account number", 40), accountName: text("paybill.accountName", p.paybill.accountName, "account name", 80) };
+  }
+  let sendMoney: PaymentOptions["sendMoney"] = null;
+  if (p.sendMoney) {
+    const ph = validatePhone(p.sendMoney.phone);
+    if (!cleanText(p.sendMoney.phone)) errors["sendMoney.phone"] = "Enter the M-Pesa number to send money to";
+    else if (ph.error) errors["sendMoney.phone"] = "Enter a valid phone number, e.g. 0712345678";
+    sendMoney = { phone: ph.error ? cleanText(p.sendMoney.phone) : ph.value, name: text("sendMoney.name", p.sendMoney.name, "name", 80, false) };
+  }
+  let bank: PaymentOptions["bank"] = null;
+  if (p.bank) {
+    const accountNo = cleanText(p.bank.accountNo);
+    if (!accountNo) errors["bank.accountNo"] = "Enter the account number";
+    else if (!/^[0-9A-Za-z -]{4,30}$/.test(accountNo)) errors["bank.accountNo"] = "Use 4 to 30 digits or letters";
+    bank = {
+      accountName: text("bank.accountName", p.bank.accountName, "account name", 80),
+      accountNo,
+      bankName: text("bank.bankName", p.bank.bankName, "bank name", 60),
+      branch: text("bank.branch", p.bank.branch, "branch", 60, false),
+      bankCode: text("bank.bankCode", p.bank.bankCode, "bank code", 20, false),
+      swift: (() => {
+        const v = cleanText(p.bank.swift).toUpperCase();
+        if (v && !/^[A-Z]{6}[A-Z0-9]{2}([A-Z0-9]{3})?$/.test(v)) errors["bank.swift"] = "A SWIFT code has 8 or 11 letters and digits";
+        return v;
+      })(),
+    };
+  }
+  return { value: { paybill, sendMoney, bank }, errors };
+}
 
 export type InvoiceLineKind = "item" | "expense";
 export type InvoiceLine = { kind: InvoiceLineKind; saleId: string | null; name: string; quantity: number; unitPriceMinor: number; totalMinor: number };
@@ -24,6 +101,7 @@ export type Invoice = {
   status: InvoiceStatus;
   paymentMethod: string;
   paymentDetails: string;
+  paymentOptions: PaymentOptions;
   vat: boolean;
   vatRate: number;
   itemsMinor: number;
@@ -66,11 +144,14 @@ export type InvoiceDraft = {
   dueDate: string;
   paymentMethod: string;
   paymentDetails: string;
+  paymentOptions: PaymentOptions;
   vat: boolean;
   lines: DraftLine[];
 };
 export type InvoiceErrors = Partial<Record<"customerId" | "brandId" | "title" | "invoiceDate" | "dueDate" | "paymentMethod" | "paymentDetails" | "lines", string>> & {
   line?: Record<string, { name?: string; quantity?: string; unitPrice?: string }>;
+  /** Payment options, keyed "paybill.business", "bank.accountNo" and so on. */
+  pay?: Record<string, string>;
 };
 
 const MAX_UNIT_MINOR = 100_000_000_00; // KES 100 million
@@ -96,7 +177,7 @@ function validDate(s: string) {
 /** Checks the form and works out every line and the totals. The same rules run in the browser and on the server. */
 export function validateInvoice(d: InvoiceDraft): {
   errors: InvoiceErrors;
-  value: { title: string; invoiceDate: string; dueDate: string; paymentMethod: string; paymentDetails: string; vat: boolean; lines: InvoiceLine[] };
+  value: { title: string; invoiceDate: string; dueDate: string; paymentMethod: string; paymentDetails: string; paymentOptions: PaymentOptions; vat: boolean; lines: InvoiceLine[] };
   totals: { itemsMinor: number; expensesMinor: number; vatMinor: number; totalMinor: number };
 } {
   const errors: InvoiceErrors = {};
@@ -108,7 +189,11 @@ export function validateInvoice(d: InvoiceDraft): {
   if (!validDate(d.invoiceDate)) errors.invoiceDate = "Choose the invoice date";
   if (!validDate(d.dueDate)) errors.dueDate = "Choose the due date";
   else if (validDate(d.invoiceDate) && d.dueDate < d.invoiceDate) errors.dueDate = "The due date cannot be before the invoice date";
-  const paymentMethod = cleanText(d.paymentMethod);
+  const pay = validatePaymentOptions(d.paymentOptions);
+  if (Object.keys(pay.errors).length) errors.pay = pay.errors;
+  // The method line lists the options chosen ("M-Pesa Paybill, Bank"); with none, whatever was typed.
+  const chosen = (Object.keys(PAYMENT_OPTION_NAMES) as (keyof PaymentOptions)[]).filter((k) => pay.value[k]).map((k) => PAYMENT_OPTION_NAMES[k]);
+  const paymentMethod = chosen.length ? chosen.join(", ") : cleanText(d.paymentMethod);
   if (paymentMethod.length > 40) errors.paymentMethod = "Keep it under 40 characters";
   const paymentDetails = cleanText(d.paymentDetails);
   if (paymentDetails.length > 200) errors.paymentDetails = "Keep it under 200 characters";
@@ -136,7 +221,7 @@ export function validateInvoice(d: InvoiceDraft): {
   const vatMinor = d.vat ? Math.round(((itemsMinor + expensesMinor) * VAT_RATE) / 100) : 0;
   return {
     errors,
-    value: { title, invoiceDate: d.invoiceDate, dueDate: d.dueDate, paymentMethod, paymentDetails, vat: d.vat, lines },
+    value: { title, invoiceDate: d.invoiceDate, dueDate: d.dueDate, paymentMethod, paymentDetails, paymentOptions: pay.value, vat: d.vat, lines },
     totals: { itemsMinor, expensesMinor, vatMinor, totalMinor: itemsMinor + expensesMinor + vatMinor },
   };
 }

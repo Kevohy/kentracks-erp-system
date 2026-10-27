@@ -306,6 +306,10 @@ export function validatePackageSale(
   const notes = sanitizeNotes(d.notes).trim();
   if (notes.length > MAX_NOTES) errors.notes = `Notes must be ${MAX_NOTES} characters or fewer`;
 
+  // An old sale's price is optional and kept for reference only (never revenue, profit or a balance).
+  const oldPrice = old && d.price.trim() ? parseMoney(d.price, "Original price", MAX_AMOUNT_MINOR) : { value: undefined as number | undefined };
+  if (old && oldPrice.error) errors.price = oldPrice.error;
+  else if (old && oldPrice.value === 0) errors.price = "Original price must be greater than zero, or leave it empty";
   const price = old ? { value: 0 } : parseMoney(d.price, "Package price", MAX_AMOUNT_MINOR);
   if (price.error) errors.price = price.error;
   else if (!old && price.value === 0) errors.price = "Package price must be greater than zero";
@@ -387,6 +391,7 @@ export function validatePackageSale(
       costMissing: profit.costMissing,
       profitMinor: profit.profitMinor,
       oldSale: old,
+      oldPriceMinor: old ? (oldPrice.value ?? null) : null,
     },
     ...(old ? { saleDate: saleDate.value } : {}),
   };

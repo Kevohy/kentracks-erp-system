@@ -1,0 +1,1 @@
+ALTER TABLE "invoices" ADD COLUMN "payment_options" jsonb DEFAULT '{}'::jsonb NOT NULL;

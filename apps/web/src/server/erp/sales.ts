@@ -142,6 +142,7 @@ async function buildSales(tenantId: string, rows: SaleRow[]): Promise<Sale[]> {
       createdAt: s.createdAt.toISOString(),
       stockTaken: takenBySale.get(s.id) ?? [],
       oldSale: s.oldSale,
+      oldPriceMinor: s.oldPriceMinor ?? null,
     };
     return sale;
   });
@@ -361,6 +362,7 @@ async function createPackageSale(ctx: AuthContext, body: Body, kind: "Package Sa
         profitMinor: result.profitMinor,
         costMissing: result.costMissing,
         oldSale: result.oldSale,
+        oldPriceMinor: result.oldSale ? result.oldPriceMinor : null,
         // An old sale is dated on its original sale day (midday in Nairobi), so history, Billing and IoT SIM use that date.
         ...(result.oldSale && saleDate ? { createdAt: new Date(`${saleDate}T09:00:00.000Z`) } : {}),
       })
