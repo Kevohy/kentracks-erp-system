@@ -1,7 +1,7 @@
 import "server-only";
 import { randomInt } from "node:crypto";
 import { sql } from "drizzle-orm";
-import { INVOICE_STATUSES, MAX_LINES, validateInvoice, type DraftLine, type Invoice, type InvoiceDraft, type InvoiceSale, type InvoiceStatus } from "@/lib/invoices";
+import { INVOICE_STATUSES, MAX_LINES, NO_PAYMENT_OPTIONS, readPaymentOptions, validateInvoice, type PaymentOptions, type DraftLine, type Invoice, type InvoiceDraft, type InvoiceSale, type InvoiceStatus } from "@/lib/invoices";
 import type { AuthContext } from "../crm/auth";
 import { loadBrands } from "../crm/brands";
 import { getDb } from "../crm/db";
@@ -22,7 +22,7 @@ const verifyCode = () => Array.from({ length: 10 }, () => CODE_ALPHABET[randomIn
 
 type Row = {
   id: string; number: string; verify_code: string; customer_id: string; brand_id: string; title: string; invoice_date: string; due_date: string;
-  status: InvoiceStatus; payment_method: string; payment_details: string; vat: boolean; vat_rate: number; items_minor: string; expenses_minor: string;
+  status: InvoiceStatus; payment_method: string; payment_details: string; payment_options: unknown; vat: boolean; vat_rate: number; items_minor: string; expenses_minor: string;
   vat_minor: string; total_minor: string; customer_name: string; customer_phone: string; customer_email: string; customer_location: string;
   brand_name: string; brand_tagline: string; brand_phone: string; brand_email: string; brand_website: string; brand_location: string; director_name: string;
   created_at: Date | string; paid_at: Date | string | null; created_by_name: string | null;
@@ -32,7 +32,7 @@ async function readInvoices(tenantId: string, where: ReturnType<typeof sql>, lim
   const db = getDb();
   const r = await db.execute<Row>(sql`
     SELECT i.id, i.number, i.verify_code, i.customer_id, i.brand_id, i.title, to_char(i.invoice_date, 'YYYY-MM-DD') AS invoice_date,
-           to_char(i.due_date, 'YYYY-MM-DD') AS due_date, i.status, i.payment_method, i.payment_details, i.vat, i.vat_rate, i.items_minor,
+           to_char(i.due_date, 'YYYY-MM-DD') AS due_date, i.status, i.payment_method, i.payment_details, i.payment_options, i.vat, i.vat_rate, i.items_minor,
            i.expenses_minor, i.vat_minor, i.total_minor, i.customer_name, i.customer_phone, i.customer_email, i.customer_location, i.brand_name,
            i.brand_tagline, i.brand_phone, i.brand_email, i.brand_website, i.brand_location, i.director_name, i.created_at, i.paid_at,
            u.full_name AS created_by_name
@@ -58,7 +58,7 @@ async function readInvoices(tenantId: string, where: ReturnType<typeof sql>, lim
     const b = brands.get(x.brand_id);
     return {
       id: x.id, number: x.number, verifyCode: x.verify_code, customerId: x.customer_id, brandId: x.brand_id, title: x.title, invoiceDate: x.invoice_date,
-      dueDate: x.due_date, status: x.status, paymentMethod: x.payment_method, paymentDetails: x.payment_details, vat: x.vat, vatRate: x.vat_rate,
+      dueDate: x.due_date, status: x.status, paymentMethod: x.payment_method, paymentDetails: x.payment_details, paymentOptions: readPaymentOptions(x.payment_options), vat: x.vat, vatRate: x.vat_rate,
       itemsMinor: Number(x.items_minor), expensesMinor: Number(x.expenses_minor), vatMinor: Number(x.vat_minor), totalMinor: Number(x.total_minor),
       customerName: x.customer_name, customerPhone: x.customer_phone, customerEmail: x.customer_email, customerLocation: x.customer_location,
       brand: {
@@ -117,16 +117,37 @@ export async function listCustomerSales(ctx: AuthContext, customerId: string): P
   });
 }
 
-/** GET /api/invoices/payment-defaults/{brandId} — the payment method and details of the brand's last invoice. */
-export async function paymentDefaults(ctx: AuthContext, brandId: string): Promise<{ id: string; paymentMethod: string; paymentDetails: string } | null> {
+/**
+ * GET /api/invoices/payment-defaults/{brandId} — the payment details of the brand's last invoice (`found` is false when
+ * it has none yet, so the form offers the company's defaults).
+ */
+export async function paymentDefaults(ctx: AuthContext, brandId: string): Promise<{ id: string; found: boolean; paymentMethod: string; paymentDetails: string; paymentOptions: PaymentOptions } | null> {
   if (!isUuid(brandId)) return null;
-  const [x] = (await getDb().execute<{ payment_method: string; payment_details: string }>(sql`
-    SELECT payment_method, payment_details FROM invoices WHERE tenant_id = ${ctx.tenantId} AND brand_id = ${brandId}::uuid AND payment_method <> ''
+  const [x] = (await getDb().execute<{ payment_method: string; payment_details: string; payment_options: unknown }>(sql`
+    SELECT payment_method, payment_details, payment_options FROM invoices
+    WHERE tenant_id = ${ctx.tenantId} AND brand_id = ${brandId}::uuid AND (payment_method <> '' OR payment_details <> '' OR payment_options <> '{}'::jsonb)
     ORDER BY created_at DESC LIMIT 1`)).rows;
-  return { id: brandId, paymentMethod: x?.payment_method ?? "", paymentDetails: x?.payment_details ?? "" };
+  return {
+    id: brandId, found: !!x, paymentMethod: x?.payment_method ?? "", paymentDetails: x?.payment_details ?? "",
+    paymentOptions: x ? readPaymentOptions(x.payment_options) : NO_PAYMENT_OPTIONS,
+  };
 }
 
-const FIELDS = ["customerId", "brandId", "title", "invoiceDate", "dueDate", "paymentMethod", "paymentDetails", "vat", "lines"] as const;
+const FIELDS = ["customerId", "brandId", "title", "invoiceDate", "dueDate", "paymentMethod", "paymentDetails", "paymentOptions", "vat", "lines"] as const;
+
+/** The payment options as sent: each of paybill, sendMoney and bank is null (not offered) or an object of text fields. */
+function readOptions(raw: unknown): PaymentOptions {
+  if (raw === undefined || raw === null) return NO_PAYMENT_OPTIONS;
+  if (typeof raw !== "object" || Array.isArray(raw)) invalid({ paymentOptions: "Payment options are not valid" });
+  const o = raw as Record<string, unknown>;
+  const extra = Object.keys(o).filter((k) => !["paybill", "sendMoney", "bank"].includes(k));
+  if (extra.length) invalid({ paymentOptions: "Payment options are not valid" });
+  const parsed = readPaymentOptions(o);
+  for (const k of ["paybill", "sendMoney", "bank"] as const) {
+    if (o[k] !== undefined && o[k] !== null && !parsed[k]) invalid({ paymentOptions: "Payment options are not valid" });
+  }
+  return parsed;
+}
 
 function readDraft(body: Body): InvoiceDraft {
   const extra = Object.keys(body).filter((k) => !(FIELDS as readonly string[]).includes(k));
@@ -150,7 +171,7 @@ function readDraft(body: Body): InvoiceDraft {
   });
   return {
     customerId: text("customerId"), brandId: text("brandId"), title: text("title"), invoiceDate: text("invoiceDate"), dueDate: text("dueDate"),
-    paymentMethod: text("paymentMethod"), paymentDetails: text("paymentDetails"), vat: body.vat === true, lines,
+    paymentMethod: text("paymentMethod"), paymentDetails: text("paymentDetails"), paymentOptions: readOptions(body.paymentOptions), vat: body.vat === true, lines,
   };
 }
 
@@ -183,11 +204,11 @@ export async function createInvoice(ctx: AuthContext, body: Body): Promise<Invoi
     try {
       const id = await db.transaction(async (tx) => {
         const [row] = (await tx.execute<{ id: string }>(sql`
-          INSERT INTO invoices (tenant_id, number, verify_code, customer_id, brand_id, title, invoice_date, due_date, payment_method, payment_details, vat, vat_rate,
+          INSERT INTO invoices (tenant_id, number, verify_code, customer_id, brand_id, title, invoice_date, due_date, payment_method, payment_details, payment_options, vat, vat_rate,
             items_minor, expenses_minor, vat_minor, total_minor, customer_name, customer_phone, customer_email, customer_location, brand_name, brand_tagline,
             brand_phone, brand_email, brand_website, brand_location, director_name, created_by)
           VALUES (${ctx.tenantId}, ${number}, ${verifyCode()}, ${customer.id}::uuid, ${brand.id}::uuid, ${value.title}, ${value.invoiceDate}::date, ${value.dueDate}::date,
-            ${value.paymentMethod}, ${value.paymentDetails}, ${value.vat}, 16, ${totals.itemsMinor}, ${totals.expensesMinor}, ${totals.vatMinor}, ${totals.totalMinor},
+            ${value.paymentMethod}, ${value.paymentDetails}, ${JSON.stringify(Object.fromEntries(Object.entries(value.paymentOptions).filter(([, v]) => v)))}::jsonb, ${value.vat}, 16, ${totals.itemsMinor}, ${totals.expensesMinor}, ${totals.vatMinor}, ${totals.totalMinor},
             ${customer.name}, ${customer.phone}, ${customer.email}, ${customer.location}, ${brand.name}, ${brand.tagline}, ${brand.phone}, ${brand.email},
             ${brand.website}, ${brand.location}, ${brand.directorName}, ${isUuid(ctx.userId) ? ctx.userId : null}::uuid)
           RETURNING id`)).rows;

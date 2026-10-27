@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { bigint, boolean, check, date, index, integer, numeric, pgEnum, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { bigint, boolean, check, date, index, integer, jsonb, numeric, pgEnum, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { brands, customers, suppliers, technicians, tenants } from "../crm/schema";
 
 /**
@@ -184,6 +184,11 @@ export const sales = pgTable(
      * Its created_at is the original sale date.
      */
     oldSale: boolean("old_sale").notNull().default(false),
+    /**
+     * Old sales only, optional: the price the device was sold for back then, kept for reference. It is never revenue,
+     * profit or a balance to collect (total, paid and profit stay 0).
+     */
+    oldPriceMinor: money("old_price_minor"),
     createdAt: createdAt(),
   },
   (t) => [
@@ -197,6 +202,7 @@ export const sales = pgTable(
       sql`(${t.oldSale} AND ${t.totalMinor} = 0 AND ${t.paidMinor} = 0 AND ${t.profitMinor} = 0)
        OR (NOT ${t.oldSale} AND ${t.totalMinor} > 0 AND ${t.paidMinor} >= 0 AND ${t.paidMinor} <= ${t.totalMinor})`,
     ),
+    check("sales_old_price", sql`${t.oldPriceMinor} IS NULL OR (${t.oldSale} AND ${t.oldPriceMinor} > 0)`),
   ],
 );
 
@@ -829,6 +835,8 @@ export const invoices = pgTable(
     status: text("status").notNull().default("Unpaid"),
     paymentMethod: text("payment_method").notNull().default(""),
     paymentDetails: text("payment_details").notNull().default(""),
+    /** M-Pesa Paybill, Send Money and bank details printed on the invoice (PaymentOptions in src/lib/invoices.ts). */
+    paymentOptions: jsonb("payment_options").notNull().default(sql`'{}'::jsonb`),
     vat: boolean("vat").notNull().default(false),
     /** Percent, e.g. 16. */
     vatRate: integer("vat_rate").notNull().default(16),

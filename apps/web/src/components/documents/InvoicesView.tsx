@@ -15,7 +15,7 @@ import { crmApi } from "@/lib/crm-api";
 import type { Customer } from "@/lib/customers";
 import { erpApi } from "@/lib/erp-api";
 import {
-  MAX_LINES, PAYMENT_METHODS, VAT_RATE, invDate, validateInvoice,
+  MAX_LINES, VAT_RATE, invDate, validateInvoice,
   type DraftLine, type Invoice, type InvoiceDraft, type InvoiceErrors, type InvoiceSale,
 } from "@/lib/invoices";
 import { formatKes } from "@/lib/purchases";
@@ -23,6 +23,7 @@ import { localPhone } from "@/lib/sms";
 import { stripControlChars } from "@/lib/validation";
 import type { InvoiceView } from "./InvoiceDocument";
 import { InvoiceFrame } from "./InvoiceFrame";
+import { InvoicePaymentFields, defaultPaymentForm, paymentFormFrom, paymentOptionsOf, type PaymentForm } from "./InvoicePaymentFields";
 
 type Load<T> = { status: "loading" } | { status: "error"; message: string } | { status: "ready"; items: T };
 
@@ -39,7 +40,7 @@ const blankLine = (kind: DraftLine["kind"]): DraftLine => ({ key: newKey(), kind
 
 function emptyDraft(): InvoiceDraft {
   const today = todayInNairobi();
-  return { customerId: "", brandId: "", title: "", invoiceDate: today, dueDate: addDays(today, 7), paymentMethod: "", paymentDetails: "", vat: false, lines: [blankLine("item")] };
+  return { customerId: "", brandId: "", title: "", invoiceDate: today, dueDate: addDays(today, 7), paymentMethod: "", paymentDetails: "", paymentOptions: { paybill: null, sendMoney: null, bank: null }, vat: false, lines: [blankLine("item")] };
 }
 
 function Step({ n, title, done, children, aside }: { n: number; title: string; done?: boolean; children: React.ReactNode; aside?: React.ReactNode }) {
@@ -120,7 +121,10 @@ function NewInvoice({ onCancel }: { onCancel: () => void }) {
   const [customers, setCustomers] = useState<Load<Customer[]>>({ status: "loading" });
   const [brands, setBrands] = useState<Brand[]>([]);
   const [sales, setSales] = useState<Load<InvoiceSale[]> | null>(null);
-  const [d, setD] = useState<InvoiceDraft>(emptyDraft);
+  const [form, setD] = useState<InvoiceDraft>(emptyDraft);
+  const [pay, setPayState] = useState<PaymentForm>(() => defaultPaymentForm());
+  // The draft as checked and sent: the payment options come from the payment section.
+  const d = useMemo<InvoiceDraft>(() => ({ ...form, paymentOptions: paymentOptionsOf(pay) }), [form, pay]);
   const [errors, setErrors] = useState<InvoiceErrors>({});
   const [preview, setPreview] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -140,10 +144,21 @@ function NewInvoice({ onCancel }: { onCancel: () => void }) {
 
   const touch = () => { setPreview(false); setFormError(""); };
 
-  function loadPaymentDefaults(brandId: string) {
+  const setPay = (f: PaymentForm) => {
+    setPayState(f);
+    setErrors((e) => ({ ...e, pay: undefined }));
+    touch();
+  };
+
+  /** The brand's last invoice says how customers pay; a brand without invoices yet gets the company's defaults. */
+  function loadPaymentDefaults(brandId: string, account: string) {
     if (!brandId) return;
     void erpApi.invoices.paymentDefaults(brandId).then((r) => {
-      if (r.ok && r.data.paymentMethod) setD((x) => (x.brandId === brandId && !x.paymentMethod && !x.paymentDetails ? { ...x, paymentMethod: r.data.paymentMethod, paymentDetails: r.data.paymentDetails } : x));
+      if (!r.ok) return;
+      const o = r.data.paymentOptions;
+      const has = !!(o.paybill || o.sendMoney || o.bank);
+      setPayState(has ? paymentFormFrom(o, account) : defaultPaymentForm(account));
+      if (r.data.paymentDetails) setD((x) => (x.brandId === brandId && !x.paymentDetails ? { ...x, paymentDetails: r.data.paymentDetails } : x));
     });
   }
 
@@ -154,7 +169,9 @@ function NewInvoice({ onCancel }: { onCancel: () => void }) {
     setD((x) => ({ ...x, customerId: id, brandId, lines: x.lines.filter((l) => !l.saleId).length ? x.lines.filter((l) => !l.saleId) : [blankLine("item")] }));
     setErrors((e) => ({ ...e, customerId: undefined, brandId: undefined }));
     touch();
-    loadPaymentDefaults(brandId);
+    // The Paybill account number is the customer's account.
+    setPayState((f) => ({ ...f, paybill: { ...f.paybill, account: c?.account ?? "" } }));
+    loadPaymentDefaults(brandId, c?.account ?? "");
     setSales(id ? { status: "loading" } : null);
     if (id) void erpApi.invoices.sales(id).then((r) => setSales(r.ok ? { status: "ready", items: r.data } : { status: "error", message: r.message }));
   }
@@ -217,6 +234,8 @@ function NewInvoice({ onCancel }: { onCancel: () => void }) {
     const order = ["customerId", "brandId", "title", "invoiceDate", "dueDate", "paymentMethod", "paymentDetails"] as const;
     const first = order.find((k) => checked.errors[k]);
     if (first) return root.current?.querySelector<HTMLElement>(`[data-field="${first}"], #inv-${first}`)?.focus();
+    const payKey = checked.errors.pay && Object.keys(checked.errors.pay)[0];
+    if (payKey) return root.current?.querySelector<HTMLElement>(`#pay-${payKey.replace(".", "-")}`)?.focus();
     const badLine = d.lines.find((l) => checked.errors.line?.[l.key]);
     if (badLine) {
       const f = checked.errors.line![badLine.key];
@@ -248,7 +267,7 @@ function NewInvoice({ onCancel }: { onCancel: () => void }) {
 
   const view: InvoiceView | null = preview && customer && brand ? {
     number: null, verifyCode: null, title: checked.value.title, invoiceDate: d.invoiceDate, dueDate: d.dueDate, status: "Unpaid",
-    paymentMethod: checked.value.paymentMethod, paymentDetails: checked.value.paymentDetails, vat: d.vat, vatRate: VAT_RATE, ...checked.totals,
+    paymentMethod: checked.value.paymentMethod, paymentDetails: checked.value.paymentDetails, paymentOptions: checked.value.paymentOptions, vat: d.vat, vatRate: VAT_RATE, ...checked.totals,
     customerName: customer.name, customerPhone: customer.phone, customerEmail: customer.email, customerLocation: customer.location,
     brand: { name: brand.name, tagline: brand.tagline, phone: brand.phone, email: brand.email, website: brand.website, location: brand.location, directorName: brand.directorName, logoUrl: brand.logoUrl, iconUrl: brand.iconUrl, signatureUrl: brand.signatureUrl, color: brand.color },
     lines: checked.value.lines, createdAt: new Date().toISOString(),
@@ -270,7 +289,7 @@ function NewInvoice({ onCancel }: { onCancel: () => void }) {
                 placeholder="Select a customer" searchPlaceholder="Search by name, account or phone"
                 options={customerList.map((c) => ({ value: c.id, label: `${c.name} · ${c.account}` }))}
                 filter={(o, q) => o.label.toLowerCase().includes(q) || (customerList.find((c) => c.id === o.value)?.phone ?? "").includes(q.replace(/\s/g, ""))} />
-              <SelectField id="inv-brandId" name="brandId" label="Brand" value={d.brandId} onChange={(v) => { set("brandId", v); loadPaymentDefaults(v); }} error={errors.brandId}
+              <SelectField id="inv-brandId" name="brandId" label="Brand" value={d.brandId} onChange={(v) => { set("brandId", v); loadPaymentDefaults(v, customer?.account ?? ""); }} error={errors.brandId}
                 options={brands.map((b) => ({ value: b.id, label: b.name }))} placeholder="Select a brand" />
             </div>
           ))}
@@ -289,14 +308,16 @@ function NewInvoice({ onCancel }: { onCancel: () => void }) {
                 <TextField id="inv-title" label="Invoice title" value={d.title} onChange={(v) => set("title", v)} error={errors.title} placeholder="e.g. Vehicle tracking installation" className="sm:col-span-2 lg:col-span-1" />
                 <DateField id="inv-invoiceDate" label="Invoice date" value={d.invoiceDate} onChange={(v) => set("invoiceDate", v)} error={errors.invoiceDate} />
                 <DateField id="inv-dueDate" label="Due date" value={d.dueDate} onChange={(v) => set("dueDate", v)} error={errors.dueDate} />
-                <SelectField id="inv-paymentMethod" name="paymentMethod" label="Payment method (optional)" value={d.paymentMethod} onChange={(v) => set("paymentMethod", v)} error={errors.paymentMethod}
-                  options={PAYMENT_METHODS.map((m) => ({ value: m, label: m }))} placeholder="Not shown" />
-                <TextField id="inv-paymentDetails" label="Payment details (optional)" value={d.paymentDetails} onChange={(v) => set("paymentDetails", v)} error={errors.paymentDetails}
-                  placeholder={d.paymentMethod === "Bank transfer" ? "e.g. Equity Bank, A/C 0123456789" : "e.g. 4140445"} className="sm:col-span-2" />
               </div>
             </Step>
 
-            <Step n={3} title="Items" aside={<span className="text-[13px] text-muted">{items.length} item{items.length === 1 ? "" : "s"}</span>}>
+            <Step n={3} title="Payment" done={!!pay.method && !errors.pay}>
+              <InvoicePaymentFields value={pay} onChange={setPay} errors={errors.pay} />
+              <TextField id="inv-paymentDetails" label="Other payment instructions (optional)" value={d.paymentDetails} onChange={(v) => set("paymentDetails", v)} error={errors.paymentDetails}
+                placeholder="e.g. Quote the invoice number when paying" />
+            </Step>
+
+            <Step n={4} title="Items" aside={<span className="text-[13px] text-muted">{items.length} item{items.length === 1 ? "" : "s"}</span>}>
               <div className="rounded-xl bg-canvas p-3 sm:p-4">
                 <h3 className="flex items-center gap-2 text-[14.5px] font-semibold"><ShoppingCart size={16} aria-hidden="true" />Add from {customer.name}&apos;s sales</h3>
                 {sales?.status === "loading" && <p className="mt-2 text-[14px] text-muted">Loading sales…</p>}
@@ -348,7 +369,7 @@ function NewInvoice({ onCancel }: { onCancel: () => void }) {
               </div>
             </Step>
 
-            <Step n={4} title="Expenses (optional)" aside={<span className="text-[13px] text-muted">e.g. transport, installation</span>}>
+            <Step n={5} title="Expenses (optional)" aside={<span className="text-[13px] text-muted">e.g. transport, installation</span>}>
               {expenses.length > 0 && (
                 <div>
                   <div className="mb-1.5 hidden grid-cols-[minmax(0,1fr)_90px_140px_130px_44px] gap-x-3 px-0.5 text-[12.5px] font-semibold text-muted sm:grid">
@@ -369,7 +390,7 @@ function NewInvoice({ onCancel }: { onCancel: () => void }) {
               </div>
             </Step>
 
-            <Step n={5} title="VAT and totals">
+            <Step n={6} title="VAT and totals">
               <label className="flex min-h-11 cursor-pointer items-center gap-3 self-start rounded-xl border border-line px-3.5">
                 <input type="checkbox" checked={d.vat} onChange={(e) => set("vat", e.target.checked)} className="size-5 accent-[var(--color-brand)]" />
                 <span className="text-[15px] font-semibold">Add VAT ({VAT_RATE}%)</span>

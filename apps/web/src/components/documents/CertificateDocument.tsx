@@ -3,6 +3,7 @@
 import { useEffect, useId, useState, type ReactNode } from "react";
 import { Car, Globe, Mail, MapPin, Phone, QrCode as QrIcon, UserRound } from "lucide-react";
 import QRCode from "qrcode";
+import { cn } from "@/lib/cn";
 import { contractLabel, dateTime, type Certificate } from "@/lib/certificates";
 import { DOC, brandAccent } from "./palette";
 
@@ -18,8 +19,8 @@ export type CertificateView = Omit<Certificate, "id" | "number" | "verifyCode" |
 // The app's light theme. The accent is the brand's own colour (Settings → Brands), set on the certificate as the CSS
 // variable --accent; brands without one use the red of the Kentracks logo.
 const RED = "var(--accent)";
-/** The brand colour with transparency, e.g. tint(40) = 40 % of the colour. */
-const tint = (pct: number) => `color-mix(in srgb, var(--accent) ${pct}%, transparent)`;
+/** Stamp ink: the brand colour deepened towards the dark red-violet of real stamp-pad ink. */
+const STAMP_INK = "color-mix(in srgb, var(--accent) 68%, #4a0a26)";
 const NAVY = DOC.navy;
 const INK = DOC.ink;
 const MUTED = DOC.muted;
@@ -97,37 +98,46 @@ function Line({ label, value }: { label: string; value: ReactNode }) {
 }
 
 /**
- * The installer's seal: a round red stamp with the brand name around the top, "Authorized Installer" around the bottom
- * and the brand icon and the date of issue in the middle. SVG, so it prints sharp.
+ * The company's rubber stamp: the brand name around the ring, "CERTIFIED" on a band across
+ * the middle and the date of issue, in the brand's colour. The ink is uneven (speckled, with rough edges), slightly
+ * tilted and see-through, like a real stamp. SVG, so it prints sharp.
  */
-function InstallerSeal({ b, issuedAt, preview }: { b: CertificateView["brand"]; issuedAt: string; preview: boolean }) {
+function RubberStamp({ b, issuedAt, preview, className }: { b: CertificateView["brand"]; issuedAt: string; preview: boolean; className?: string }) {
   const id = useId().replace(/:/g, "");
   const top = b.name.toUpperCase();
-  const icon = b.iconUrl ?? b.logoUrl;
-  const spacing = Math.max(0.6, Math.min(4, (170 - top.length * 9.2) / Math.max(1, top.length)));
+  // Long names get smaller letters so they fit on the arc (keeping clear of the stars at the sides).
+  const fontSize = Math.min(17, 180 / Math.max(1, top.length * 0.72));
+  const spacing = Math.max(0.4, Math.min(5, (180 - top.length * fontSize * 0.72) / Math.max(1, top.length)));
+  const date = preview ? "PREVIEW" : dmy(issuedAt).toUpperCase();
   return (
-    <svg viewBox="0 0 200 200" className="size-[124px] shrink-0" role="img" aria-label={`${b.name} authorized installer seal`}>
+    <svg viewBox="0 0 220 220" role="img" aria-label={`${b.name} certified stamp, ${preview ? "preview" : dmy(issuedAt)}`}
+      className={cn("pointer-events-none shrink-0 rotate-[-12deg] opacity-[0.84] mix-blend-multiply", className)}>
       <defs>
-        <path id={`${id}-t`} d="M 34,100 A 66,66 0 0 1 166,100" />
-        <path id={`${id}-b`} d="M 27,100 A 73,73 0 0 0 173,100" />
-        <clipPath id={`${id}-c`}><circle cx="100" cy="86" r="25" /></clipPath>
+        <path id={`${id}-t`} d="M 40,110 A 70,70 0 0 1 180,110" />
+        <path id={`${id}-b`} d="M 33,110 A 77,77 0 0 0 187,110" />
+        {/* Worn ink: rough edges, then specks where the ink did not take. */}
+        <filter id={`${id}-ink`} x="-5%" y="-5%" width="110%" height="110%">
+          <feTurbulence type="fractalNoise" baseFrequency="0.035" numOctaves="2" seed="7" result="warp" />
+          <feDisplacementMap in="SourceGraphic" in2="warp" scale="2.6" xChannelSelector="R" yChannelSelector="G" result="rough" />
+          <feTurbulence type="fractalNoise" baseFrequency="0.55" numOctaves="2" seed="3" result="grain" />
+          <feColorMatrix in="grain" type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 -3.2 2.75" result="specks" />
+          <feComposite in="rough" in2="specks" operator="in" />
+        </filter>
       </defs>
-      <g fill="none" style={{ stroke: RED }}>
-        <circle cx="100" cy="100" r="95" strokeWidth="5" />
-        <circle cx="100" cy="100" r="88" strokeWidth="1.4" />
-        <circle cx="100" cy="100" r="56" strokeWidth="1.8" />
-        <circle cx="100" cy="100" r="51" strokeWidth="0.9" strokeDasharray="2 2.6" />
+      <g filter={`url(#${id}-ink)`} style={{ fill: STAMP_INK, stroke: STAMP_INK }}>
+        <circle cx="110" cy="110" r="100" fill="none" strokeWidth="6" />
+        <circle cx="110" cy="110" r="92" fill="none" strokeWidth="1.6" />
+        <circle cx="110" cy="110" r="58" fill="none" strokeWidth="1.6" />
+        <text fontSize={fontSize} fontWeight="900" letterSpacing={spacing} textAnchor="middle" stroke="none"><textPath href={`#${id}-t`} startOffset="50%">{top}</textPath></text>
+        <text fontSize="11" fontWeight="800" letterSpacing="1.8" textAnchor="middle" dominantBaseline="hanging" stroke="none"><textPath href={`#${id}-b`} startOffset="50%">AUTHORIZED INSTALLER</textPath></text>
+        <text x="21" y="116" fontSize="14" stroke="none">★</text>
+        <text x="185" y="116" fontSize="14" stroke="none">★</text>
+        <text x="110" y="83" textAnchor="middle" fontSize="11" letterSpacing="3" stroke="none">★★★</text>
+        {/* The band across the middle, with the word knocked out of the ink. */}
+        <rect x="10" y="92" width="200" height="34" rx="2" stroke="none" />
+        <text x="110" y="117" textAnchor="middle" fontSize="23" fontWeight="900" letterSpacing="3.5" fill="#fff" stroke="none">CERTIFIED</text>
+        <text x="110" y="146" textAnchor="middle" fontSize="13" fontWeight="800" letterSpacing="1.2" stroke="none">{date}</text>
       </g>
-      <g style={{ fill: RED }} fontWeight="800">
-        <text fontSize="15.5" letterSpacing={spacing} textAnchor="middle"><textPath href={`#${id}-t`} startOffset="50%">{top}</textPath></text>
-        <text fontSize="10" letterSpacing="1.5" textAnchor="middle" dominantBaseline="hanging"><textPath href={`#${id}-b`} startOffset="50%">AUTHORIZED INSTALLER</textPath></text>
-        <text x="25" y="105" fontSize="13">★</text>
-        <text x="163" y="105" fontSize="13">★</text>
-      </g>
-      {icon ? <image href={icon} x="75" y="61" width="50" height="50" clipPath={`url(#${id}-c)`} preserveAspectRatio="xMidYMid meet" />
-        : <text x="100" y="98" textAnchor="middle" fontSize="26" fontWeight="900" style={{ fill: RED }}>{b.name.slice(0, 1).toUpperCase()}</text>}
-      <rect x="52" y="115" width="96" height="20" rx="3" fill="#fff" style={{ stroke: RED }} strokeWidth="1.4" />
-      <text x="100" y="129.5" textAnchor="middle" fontSize="12" fontWeight="800" style={{ fill: RED }} letterSpacing="0.6">{preview ? "PREVIEW" : dmy(issuedAt).toUpperCase()}</text>
     </svg>
   );
 }
@@ -172,7 +182,7 @@ export function CertificateDocument({ c }: { c: CertificateView }) {
   const b = c.brand;
   const preview = c.verifyCode === null;
   const brandName = b.name.toUpperCase();
-  const strap = (b.tagline || "GPS Tracking & Vehicle Security").toUpperCase();
+  const strap = "MAKE GPS BUSINESS SIMPLE";
   const contacts = [
     b.location && { icon: MapPin, text: b.location },
     b.phone && { icon: Phone, text: spaced(b.phone) },
@@ -273,23 +283,11 @@ export function CertificateDocument({ c }: { c: CertificateView }) {
           </p>
         </section>
 
-        {/* Installer stamp and signature */}
-        <div className="mt-[22px] grid grid-cols-[330px_1fr] items-start gap-6">
-          <div className="rounded-[12px] border-[2.5px] p-[4px]" style={{ borderColor: RED }}>
-            <div className="flex items-center gap-[12px] rounded-[8px] border px-[10px] py-[10px]" style={{ borderColor: tint(40) }}>
-              <InstallerSeal b={b} issuedAt={c.issuedAt} preview={preview} />
-              <div className="min-w-0 flex-1">
-                <p className="text-[12px] font-extrabold leading-tight tracking-[0.08em]" style={{ color: RED }}>{brandName}</p>
-                <p className="mt-[1px] text-[8.5px] font-bold uppercase tracking-[0.16em]" style={{ color: INK }}>Authorized Installer</p>
-                <div className="my-[6px] h-px" style={{ background: `linear-gradient(90deg, ${tint(40)}, transparent)` }} />
-                {b.phone && <p className="text-[9.5px] font-semibold leading-[14px]">Tel: {spaced(b.phone)}</p>}
-                {b.website && <p className="text-[9px] font-semibold leading-[14px]" style={{ color: RED }}>{host(b.website)}</p>}
-                {b.location && <p className="text-[8.5px] leading-[12px]" style={{ color: MUTED }}>{b.location}</p>}
-                <div className="mt-[6px] rounded-[5px] px-[7px] py-[3px] text-[8px] font-semibold leading-[12px]" style={{ backgroundColor: tint(7), color: INK }}>
-                  {preview ? "Stamp applied when generated" : <>Digitally stamped<br /><span className="whitespace-nowrap font-bold">{dateTime(c.issuedAt)}</span><br />ID <span className="font-mono font-bold tracking-[0.06em]">{c.verifyCode}</span></>}
-                </div>
-              </div>
-            </div>
+        {/* Stamp and signature */}
+        <div className="mt-[18px] grid grid-cols-[1fr_1fr] items-center gap-6">
+          <div className="flex w-[170px] flex-col items-center">
+            <RubberStamp b={b} issuedAt={c.issuedAt} preview={preview} className="size-[150px]" />
+            <p className="-mt-[2px] text-[12px] font-bold tracking-[0.06em]" style={{ color: STAMP_INK }}>{preview ? "Preview" : dmy(c.issuedAt)}</p>
           </div>
           <div className="flex flex-col items-end pt-[6px] text-right">
             <div className="flex h-[70px] w-full items-end justify-end">
@@ -306,7 +304,7 @@ export function CertificateDocument({ c }: { c: CertificateView }) {
 
         {/* Contacts */}
         {contacts.length > 0 ? (
-          <div className="mb-[16px] mt-auto rounded-[10px] border-t-[3px] px-4 py-[9px]" style={{ borderTopColor: RED, backgroundColor: DOC.card }}>
+          <div className="mb-[16px] mt-auto rounded-[10px] px-4 py-[9px]" style={{ backgroundColor: DOC.card }}>
             <div className="flex flex-wrap items-center justify-center gap-x-0 gap-y-1 text-[9.5px]" style={{ color: MUTED }}>
               {contacts.map(({ icon: Icon, text }, i) => (
                 <span key={text} className="inline-flex items-center gap-1.5 px-3" style={i ? { borderLeft: `1px solid ${LINE}` } : undefined}>

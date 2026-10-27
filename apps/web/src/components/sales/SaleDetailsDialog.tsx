@@ -238,6 +238,7 @@ export function SaleDetailsDialog({
                 <Section title="Package">
                   <dl className="grid grid-cols-1 gap-x-6 gap-y-3 sm:grid-cols-2">
                     <Item label="Package" value={pkg.packageName} />
+                    {pkg.oldSale && pkg.oldPriceMinor != null && <Item label="Original price (reference only)" value={formatKes(pkg.oldPriceMinor)} />}
                     {pkg.tracker && <Item label="GPS tracker" value={pkg.tracker.model} />}
                     <Item label="Platform licence" value={`${pkg.licence.platformName} — ${pkg.licence.cardType}`} />
                     {pkg.licence.expirationDate && <Item label="Platform expiration date" value={pkg.licence.expirationDate} />}

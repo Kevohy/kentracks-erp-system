@@ -281,6 +281,20 @@
       "when": 1793119301547,
       "tag": "0039_row_level_security",
       "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1793125059182,
+      "tag": "0040_old_sale_price",
+      "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1793126405612,
+      "tag": "0041_invoice_payment_options",
+      "breakpoints": true
     }
   ]
 }
