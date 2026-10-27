@@ -19,8 +19,8 @@ export type CertificateView = Omit<Certificate, "id" | "number" | "verifyCode" |
 // The app's light theme. The accent is the brand's own colour (Settings → Brands), set on the certificate as the CSS
 // variable --accent; brands without one use the red of the Kentracks logo.
 const RED = "var(--accent)";
-/** Stamp ink: the brand colour deepened towards the dark red-violet of real stamp-pad ink. */
-const STAMP_INK = "color-mix(in srgb, var(--accent) 68%, #4a0a26)";
+/** Stamp ink: the blue-violet of a real stamp pad, the same for every brand. */
+const STAMP_INK = "#2A3F9D";
 const NAVY = DOC.navy;
 const INK = DOC.ink;
 const MUTED = DOC.muted;
@@ -108,7 +108,6 @@ function RubberStamp({ b, issuedAt, preview, className }: { b: CertificateView["
   // Long names get smaller letters so they fit on the arc (keeping clear of the stars at the sides).
   const fontSize = Math.min(17, 180 / Math.max(1, top.length * 0.72));
   const spacing = Math.max(0.4, Math.min(5, (180 - top.length * fontSize * 0.72) / Math.max(1, top.length)));
-  const date = preview ? "PREVIEW" : dmy(issuedAt).toUpperCase();
   return (
     <svg viewBox="0 0 220 220" role="img" aria-label={`${b.name} certified stamp, ${preview ? "preview" : dmy(issuedAt)}`}
       className={cn("pointer-events-none shrink-0 rotate-[-12deg] opacity-[0.84] mix-blend-multiply", className)}>
@@ -136,7 +135,7 @@ function RubberStamp({ b, issuedAt, preview, className }: { b: CertificateView["
         {/* The band across the middle, with the word knocked out of the ink. */}
         <rect x="10" y="92" width="200" height="34" rx="2" stroke="none" />
         <text x="110" y="117" textAnchor="middle" fontSize="23" fontWeight="900" letterSpacing="3.5" fill="#fff" stroke="none">CERTIFIED</text>
-        <text x="110" y="146" textAnchor="middle" fontSize="13" fontWeight="800" letterSpacing="1.2" stroke="none">{date}</text>
+        <text x="110" y="148" textAnchor="middle" fontSize="11" letterSpacing="3" stroke="none">★★★</text>
       </g>
     </svg>
   );
@@ -284,21 +283,22 @@ export function CertificateDocument({ c }: { c: CertificateView }) {
         </section>
 
         {/* Stamp and signature */}
-        <div className="mt-[18px] grid grid-cols-[1fr_1fr] items-center gap-6">
+        <div className="mt-[18px] grid grid-cols-[1fr_1fr] items-end gap-6">
           <div className="flex w-[170px] flex-col items-center">
             <RubberStamp b={b} issuedAt={c.issuedAt} preview={preview} className="size-[150px]" />
             <p className="-mt-[2px] text-[12px] font-bold tracking-[0.06em]" style={{ color: STAMP_INK }}>{preview ? "Preview" : dmy(c.issuedAt)}</p>
           </div>
-          <div className="flex flex-col items-end pt-[6px] text-right">
-            <div className="flex h-[70px] w-full items-end justify-end">
-              {/* eslint-disable-next-line @next/next/no-img-element -- same-origin brand image */}
-              {b.signatureUrl ? <img src={b.signatureUrl} alt="Director's signature" className="max-h-[70px] max-w-[190px] object-contain" /> : null}
+          <div className="flex flex-col items-end">
+            <div className="flex w-[250px] flex-col items-center text-center">
+              <div className="flex h-[64px] w-full items-end justify-center">
+                {/* eslint-disable-next-line @next/next/no-img-element -- same-origin brand image */}
+                {b.signatureUrl ? <img src={b.signatureUrl} alt="Director's signature" className="max-h-[64px] max-w-[200px] object-contain" /> : null}
+              </div>
+              <div className="mt-[2px] h-px w-full" style={{ backgroundColor: "#AEB8C2" }} />
+              <p className="mt-[8px] text-[11.5px] font-extrabold tracking-[0.1em]">{(b.directorName || "Authorised signatory").toUpperCase()}</p>
+              <p className="mt-[1px] text-[9.5px]" style={{ color: MUTED }}>{b.directorName ? `Managing Director, ${brandName}` : brandName}</p>
             </div>
-            <div className="mt-[4px] h-[2px] w-full" style={{ backgroundColor: INK }} />
-            <p className="mt-[10px] text-[11.5px] font-extrabold tracking-[0.1em]">{(b.directorName || "Authorised signatory").toUpperCase()}</p>
-            <p className="mt-[2px] text-[9.5px]" style={{ color: MUTED }}>{b.directorName ? `Managing Director, ${brandName}` : brandName}</p>
-            <div className="my-[12px] h-px w-full" style={{ backgroundColor: LINE }} />
-            <p className="text-[11.5px] font-extrabold tracking-[0.14em]">THANK YOU FOR YOUR BUSINESS</p>
+            <p className="mt-[18px] text-[11px] font-extrabold tracking-[0.18em]" style={{ color: NAVY }}>THANK YOU FOR YOUR BUSINESS</p>
           </div>
         </div>
 
