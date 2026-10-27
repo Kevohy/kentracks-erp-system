@@ -18,7 +18,7 @@ import {
   type PendingAirtimeLine,
   validateAirtimePlan,
 } from "@/lib/airtime";
-import { EXPIRY_WINDOW_DAYS, normalizeDate, todayInNairobi } from "@/lib/billing";
+import { EXPIRY_WINDOW_DAYS, todayInNairobi } from "@/lib/billing";
 import { simServiceOf } from "@/lib/sales";
 import { validatePhone } from "@/lib/validation";
 import { requireAdmin, type AuthContext } from "../crm/auth";
@@ -27,6 +27,7 @@ import { ApiError, isUuid } from "../crm/http";
 import { Reader, throwValidation, type Body } from "./body";
 import { billingDevices } from "./billing";
 import { verifyImeisOnServer } from "./gps";
+import { storeGpsDevice } from "./gps-store";
 import { applyServiceChange, logAirtimeEvent } from "./sim-service";
 import { sendSystemSms } from "./sms";
 import { textSmsConfigured } from "./textsms";
@@ -311,11 +312,7 @@ export async function refreshImeiExpiry(ctx: AuthContext, saleId: string): Promi
   if (line.lifelong) return { imeiExpiry: null, lifelong: true };
   const res = (await verifyImeisOnServer(ctx.tenantId, [line.imei])).get(line.imei);
   if (!res || !res.ok) return { imeiExpiry: line.imeiExpiry, lifelong: false, message: `${res?.message ?? "The device could not be checked."} Showing the last known date.` };
-  const d = res.device;
-  await getDb().execute(sql`
-    UPDATE package_sales SET gps_model = ${d.model}, gps_status = ${d.status ?? null}, gps_activation_date = ${normalizeDate(d.activationDate)},
-      gps_expiration_date = ${normalizeDate(d.expirationDate)}, gps_synced_at = now()
-    WHERE sale_id = ${saleId}::uuid AND EXISTS (SELECT 1 FROM sales s WHERE s.id = ${saleId}::uuid AND s.tenant_id = ${ctx.tenantId})`);
+  await storeGpsDevice(ctx.tenantId, saleId, res.device);
   const fresh = await oneLine(ctx.tenantId, saleId);
   return { imeiExpiry: fresh?.imeiExpiry ?? null, lifelong: false, ...(fresh?.imeiExpiry ? {} : { message: "The GPS platform has no expiry date for this device." }) };
 }

@@ -248,11 +248,16 @@ export const packageSales = pgTable(
     renewalFeeMinor: money("renewal_fee_minor"),
     /** New Card only: the platform expiration date GPSPlatform returned for the device. */
     platformExpirationDate: text("platform_expiration_date"),
-    /** Billing: the device as GPSPlatform last reported it (refreshed from the Billing page). Null until first checked. */
+    /**
+     * The device as the GPS platform last reported it (refreshed by Billing, Airtime and the background GPS job).
+     * Null until first checked; a date the platform has not set yet keeps the last known one.
+     */
     gpsModel: text("gps_model"),
     gpsStatus: text("gps_status"),
     gpsActivationDate: text("gps_activation_date"),
     gpsExpirationDate: text("gps_expiration_date"),
+    /** When the device last sent data to the platform ("YYYY-MM-DD HH:mm", Nairobi time); null if never. */
+    gpsLastSeen: text("gps_last_seen"),
     gpsSyncedAt: timestamp("gps_synced_at", { withTimezone: true }),
   },
   (t) => [
