@@ -10,7 +10,7 @@ import { useCrmLookups } from "@/components/crm/useCrmLookups";
 import { useCrmList } from "@/components/crm/useCrmList";
 import { AddCustomerDialog } from "@/components/customers/AddCustomerDialog";
 import { crmApi } from "@/lib/crm-api";
-import type { Customer } from "@/lib/customers";
+import { capitalizeName, type Customer } from "@/lib/customers";
 import { erpApi, newClientKey } from "@/lib/erp-api";
 import { MOCK_IMEIS, sanitizeImeiInput, validateImei, type GpsDevice, type GpsSource } from "@/lib/gps-platform";
 import { MAX_NOTES, parseMoney } from "@/lib/purchase-validation";
@@ -177,11 +177,11 @@ export function PackageSaleForm({ kind = "Package Sale" }: { kind?: "Package Sal
   // The device contact as starting values for the new customer.
   const deviceContact = verify.status === "ok" ? verify.device.contact : undefined;
   const addInitial = (() => {
-    const [first = "", ...rest] = (deviceContact?.name ?? "").trim().split(/\s+/);
+    const fullName = capitalizeName((deviceContact?.name ?? "").trim().replace(/\s+/g, " "));
     const account = verify.status === "ok" ? (verify.device.account ?? "").replace(/\s+/g, "") : "";
     // The owner's role on the GPS platform picks the customer type (a virtual account is treated as an end user).
     const type = verify.status === "ok" && verify.device.accountType === "Distributor" ? ("Distributor" as const) : ("End User" as const);
-    return { type, values: { firstName: first, lastName: rest.join(" "), account, phone: deviceContact?.phone ?? "", email: deviceContact?.email ?? "" } };
+    return { type, values: { fullName, account, phone: deviceContact?.phone ?? "", email: deviceContact?.email ?? "" } };
   })();
 
   // -------------------------------------------------------------- draft edits

@@ -1,5 +1,6 @@
 import "server-only";
 import { readSessionToken, validateSession } from "../auth/session";
+import { setScopeTenant } from "./db-scope";
 import { ApiError } from "./http";
 
 export type AuthContext = { tenantId: string; userId: string; role?: "admin" | "staff" };
@@ -12,6 +13,8 @@ export type AuthContext = { tenantId: string; userId: string; role?: "admin" | "
 export async function getAuthContext(req: Request): Promise<AuthContext> {
   const user = await validateSession(readSessionToken(req.headers));
   if (!user) throw new ApiError(401, "Not authenticated");
+  // From here on the database shows this request only the user's company (row-level security, db-scope.ts).
+  setScopeTenant(user.tenantId);
   return { tenantId: user.tenantId, userId: user.userId, role: user.role };
 }
 

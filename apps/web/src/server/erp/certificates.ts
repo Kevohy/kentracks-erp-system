@@ -5,6 +5,7 @@ import { validUntilOf, validateCertificate, type Certificate, type CertificateCh
 import type { AuthContext } from "../crm/auth";
 import { loadBrands } from "../crm/brands";
 import { getDb } from "../crm/db";
+import { asSystem } from "../crm/db-scope";
 import { ApiError, isUuid } from "../crm/http";
 
 /**
@@ -190,7 +191,10 @@ export async function createCertificate(ctx: AuthContext, body: Body): Promise<C
  * Shows only what is needed to confirm it - the owner's name shortened, no phone, email or address, and the IMEI
  * with its last four digits hidden (as on the printed certificate).
  */
-export async function checkCertificate(code: string): Promise<CertificateCheck | null> {
+export const checkCertificate = (code: string) => asSystem(() => checkCertificateAny(code));
+
+/** Looks the code up in every company (system scope: the public verify page has no signed-in user). */
+async function checkCertificateAny(code: string): Promise<CertificateCheck | null> {
   const c = code.trim().toUpperCase();
   if (!/^[A-Z0-9]{10}$/.test(c)) return null;
   const [x] = (await getDb().execute<{

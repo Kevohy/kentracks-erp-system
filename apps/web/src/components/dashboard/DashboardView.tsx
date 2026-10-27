@@ -1,20 +1,24 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Loader2, RefreshCw } from "lucide-react";
+import Link from "next/link";
+import { AlertTriangle, Loader2, RefreshCw } from "lucide-react";
 import { PageHeader } from "@/components/shell/PageHeader";
 import { DASHBOARD_REFRESH_SECONDS, type DashboardSummary } from "@/lib/dashboard";
 import { erpApi } from "@/lib/erp-api";
+import { DevicesCard } from "./DevicesCard";
 import { KpiCards } from "./KpiCards";
 import { RecentSales } from "./RecentSales";
-import { RevenueChart } from "./RevenueChart";
-import { StockLevels } from "./StockLevels";
+import { SalesTrend } from "./SalesTrend";
 import { UpcomingRenewals } from "./UpcomingRenewals";
 
-const rowClass = "grid grid-cols-1 gap-[18px] min-[1180px]:grid-cols-[minmax(0,1.7fr)_minmax(0,1fr)]";
+const rowClass = "grid grid-cols-1 gap-4 min-[1180px]:grid-cols-[minmax(0,1.75fr)_minmax(0,1fr)]";
 const time = (iso: string) => new Date(iso).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: "Africa/Nairobi" });
 
-/** The main Dashboard: live figures from the company's records, refreshed every minute and when the tab is shown again. */
+/**
+ * The main Dashboard: headline figures, the sales trend, devices by GPS status, recent sales and renewals. Live
+ * figures from the company's records, refreshed every minute and when the tab is shown again.
+ */
 export function DashboardView() {
   const [data, setData] = useState<DashboardSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -54,7 +58,7 @@ export function DashboardView() {
     <>
       <PageHeader
         title="Dashboard"
-        subtitle="Overview of sales, customers, renewals and stock"
+        subtitle="Sales, devices and renewals at a glance"
         aside={
           <div className="flex items-center gap-2.5">
             {data && (
@@ -67,10 +71,11 @@ export function DashboardView() {
               type="button"
               onClick={() => void load()}
               disabled={busy}
-              className="inline-flex h-8 items-center gap-1.5 rounded-full border border-line bg-white px-3 text-[13px] font-semibold text-navy hover:bg-canvas disabled:opacity-60"
+              aria-label="Refresh"
+              title="Refresh"
+              className="grid size-8 place-items-center rounded-full border border-line bg-white text-navy hover:bg-canvas disabled:opacity-60"
             >
               <RefreshCw size={14} className={busy ? "animate-spin" : undefined} aria-hidden="true" />
-              Refresh
             </button>
           </div>
         }
@@ -88,14 +93,29 @@ export function DashboardView() {
       )}
       {data && (
         <>
+          {(data.renewals.overdueCount > 0 || data.lowStockCount > 0) && (
+            <p className="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-xl border border-[#F6D9B8] bg-[#FFF8EF] px-3.5 py-2.5 text-[13.5px] text-[#7a3600]">
+              <AlertTriangle size={15} className="shrink-0" aria-hidden="true" />
+              {data.renewals.overdueCount > 0 && (
+                <Link href="/billing/vehicles?filter=Expired" className="hover:underline">
+                  <span className="font-semibold">{data.renewals.overdueCount.toLocaleString("en-US")}</span> renewal{data.renewals.overdueCount === 1 ? "" : "s"} expired
+                </Link>
+              )}
+              {data.lowStockCount > 0 && (
+                <Link href="/inventory/products" className="hover:underline">
+                  <span className="font-semibold">{data.lowStockCount.toLocaleString("en-US")}</span> item{data.lowStockCount === 1 ? "" : "s"} low on stock
+                </Link>
+              )}
+            </p>
+          )}
           <KpiCards data={data} />
           <section className={rowClass}>
-            <RevenueChart data={data} />
-            <UpcomingRenewals data={data} />
+            <SalesTrend data={data} />
+            <DevicesCard data={data} />
           </section>
-          <section className={rowClass}>
+          <section className="grid grid-cols-1 gap-4 min-[1000px]:grid-cols-2">
             <RecentSales data={data} />
-            <StockLevels data={data} />
+            <UpcomingRenewals data={data} />
           </section>
         </>
       )}

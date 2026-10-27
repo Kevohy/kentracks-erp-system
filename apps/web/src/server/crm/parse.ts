@@ -31,9 +31,18 @@ export function parseFields<F extends string>(
   return clean;
 }
 
-/** Picks the record type from the body (create) or checks it matches the stored one (update). */
-export function parseType<T extends string>(body: Record<string, unknown>, allowed: readonly T[], existing?: T): T {
+/**
+ * Picks the record type from the body (create) or checks it matches the stored one (update). With `canChange`, an
+ * update may give another valid type (customers can move between End User, Distributor and Company).
+ */
+export function parseType<T extends string>(body: Record<string, unknown>, allowed: readonly T[], existing?: T, canChange = false): T {
   const raw = body.type;
+  if (existing !== undefined && canChange) {
+    if (raw === undefined) return existing;
+    if (typeof raw !== "string" || !(allowed as readonly string[]).includes(raw))
+      throw new ApiError(422, "Please choose a valid type", { type: `Type must be one of: ${allowed.join(", ")}` });
+    return raw as T;
+  }
   if (existing !== undefined) {
     if (raw !== undefined && raw !== existing) throw new ApiError(422, "The type of an existing record cannot be changed", { type: "The type cannot be changed" });
     return existing;

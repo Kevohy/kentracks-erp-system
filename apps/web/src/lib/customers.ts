@@ -21,6 +21,7 @@ export type Customer = {
 };
 
 export type FieldName =
+  | "fullName"
   | "firstName"
   | "lastName"
   | "companyName"
@@ -42,10 +43,10 @@ export type FieldDef = {
   hint?: string;
 };
 
-const account: FieldDef = { name: "account", label: "Account", type: "text", placeholder: "e.g. ACC-1001 (no spaces)" };
+const account: FieldDef = { name: "account", label: "Account", type: "text", placeholder: "e.g. ACC-1001" };
 // A customer may keep one of these private: give a phone number, an email, or both.
-const phone: FieldDef = { name: "phone", label: "Phone Number", type: "tel", placeholder: "0712345678 or +254712345678", hint: "Optional if an email is given" };
-const email: FieldDef = { name: "email", label: "Email", type: "email", placeholder: "name@example.com", hint: "Optional if a phone number is given" };
+const phone: FieldDef = { name: "phone", label: "Phone", type: "tel", placeholder: "0712 345 678" };
+const email: FieldDef = { name: "email", label: "Email", type: "email", placeholder: "name@example.com" };
 const location: FieldDef = { name: "location", label: "Location", type: "text", placeholder: "e.g. Westlands, Nairobi" };
 
 const person: FieldDef[] = [
@@ -57,7 +58,10 @@ const person: FieldDef[] = [
   location,
 ];
 
-/** The form fields for each customer type, in display order. */
+/**
+ * The fields the API takes for each customer type, in order. People are saved with a first and a last name; the form
+ * asks for the full name in one box instead (formFieldsByType) and splits it.
+ */
 export const fieldsByType: Record<CustomerType, FieldDef[]> = {
   "End User": person,
   Distributor: person,
@@ -71,6 +75,41 @@ export const fieldsByType: Record<CustomerType, FieldDef[]> = {
   ],
 };
 
+const fullName: FieldDef = { name: "fullName", label: "Full name", type: "text", placeholder: "e.g. Kelvin Kariuki", wide: true };
+
+/** The form's fields for each customer type, in display order: one box for a person's full name. */
+export const formFieldsByType: Record<CustomerType, FieldDef[]> = {
+  "End User": [fullName, phone, email, account, location],
+  Distributor: [fullName, phone, email, account, location],
+  Company: [
+    { name: "companyName", label: "Company name", type: "text", placeholder: "e.g. Rose Booker & Sons", wide: true },
+    phone,
+    email,
+    account,
+    { name: "pin", label: "KRA PIN", type: "text", placeholder: "e.g. P051234567A" },
+    location,
+  ],
+};
+
+export const isPerson = (t: CustomerType) => t !== "Company";
+
+/** What each type means, shown under its name when choosing one. */
+export const customerTypeHints: Record<CustomerType, string> = {
+  "End User": "Owns a tracked vehicle",
+  Distributor: "Resells trackers",
+  Company: "A business or fleet",
+};
+
+/** "Kelvin Kariuki" → first "Kelvin", last "Kariuki"; everything after the first word is the last name. */
+export function splitFullName(full: string): { firstName: string; lastName: string } {
+  const [first = "", ...rest] = full.trim().split(/\s+/);
+  return { firstName: first, lastName: rest.join(" ") };
+}
+
+/** Capitalises the first letter of every word as it is typed: "kelvin kariuki" → "Kelvin Kariuki", "mary-jane" → "Mary-Jane". */
+export function capitalizeName(raw: string): string {
+  return raw.replace(/(^|[\s'’-])(\p{Ll})/gu, (_, sep: string, ch: string) => sep + ch.toLocaleUpperCase());
+}
 
 /** Current values of a customer as form field values. */
 export function toFormValues(c: Customer): Partial<Record<FieldName, string>> {
@@ -79,6 +118,7 @@ export function toFormValues(c: Customer): Partial<Record<FieldName, string>> {
   }
   const [first, ...rest] = c.name.split(" ");
   return {
+    fullName: c.firstName !== undefined && c.lastName !== undefined ? `${c.firstName} ${c.lastName}`.trim() : c.name,
     firstName: c.firstName ?? first,
     lastName: c.lastName ?? rest.join(" "),
     account: c.account,

@@ -5,6 +5,7 @@ import { INVOICE_STATUSES, MAX_LINES, validateInvoice, type DraftLine, type Invo
 import type { AuthContext } from "../crm/auth";
 import { loadBrands } from "../crm/brands";
 import { getDb } from "../crm/db";
+import { asSystem } from "../crm/db-scope";
 import { ApiError, isUuid } from "../crm/http";
 
 /**
@@ -224,7 +225,10 @@ export async function setInvoiceStatus(ctx: AuthContext, id: string, body: Body)
 export type InvoiceCheck = { verifyCode: string; number: string; status: InvoiceStatus; customerName: string; brandName: string; invoiceDate: string; dueDate: string; totalMinor: number; title: string };
 
 /** /verify/{code} for an invoice (public, no sign-in). The customer's name is shortened; no phone, email or address. */
-export async function checkInvoice(code: string): Promise<InvoiceCheck | null> {
+export const checkInvoice = (code: string) => asSystem(() => checkInvoiceAny(code));
+
+/** Looks the code up in every company (system scope: the public verify page has no signed-in user). */
+async function checkInvoiceAny(code: string): Promise<InvoiceCheck | null> {
   const c = code.trim().toUpperCase();
   if (!/^[A-Z0-9]{10}$/.test(c)) return null;
   const [x] = (await getDb().execute<{ verify_code: string; number: string; status: InvoiceStatus; customer_name: string; brand_name: string; invoice_date: string; due_date: string; total_minor: string; title: string }>(sql`

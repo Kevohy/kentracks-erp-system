@@ -258,7 +258,10 @@ export const packageSales = pgTable(
     gpsExpirationDate: text("gps_expiration_date"),
     /** When the device last sent data to the platform ("YYYY-MM-DD HH:mm", Nairobi time); null if never. */
     gpsLastSeen: text("gps_last_seen"),
+    /** When the details (model, dates and status) were last asked for. */
     gpsSyncedAt: timestamp("gps_synced_at", { withTimezone: true }),
+    /** When the live status alone (Track API) was last asked for; it is refreshed much more often than the details. */
+    gpsStatusAt: timestamp("gps_status_at", { withTimezone: true }),
   },
   (t) => [
     // Billing: the latest sale of each IMEI.
