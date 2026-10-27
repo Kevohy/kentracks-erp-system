@@ -15,6 +15,7 @@ import {
   LIVE_REFRESH_SECONDS,
   nextExpiry,
   renewalStatus,
+  seenAgo,
   todayInNairobi,
   vehicleMatches,
   type BillingCustomer,
@@ -113,6 +114,9 @@ function VehicleCard({ v, today, onViewSale, onCopy, onRefresh, refreshing, onEd
           <h3 className="whitespace-nowrap text-[15px] font-semibold">{v.vehiclePlate || "No plate"}</h3>
           {v.deviceModel && <span className="truncate rounded-md bg-canvas px-1.5 py-0.5 text-[12px] font-medium text-[#3d4b57]">{v.deviceModel}</span>}
           <StatusPill status={v.status} />
+          {v.status === "Offline" && v.lastSeen && (
+            <span className="whitespace-nowrap text-[12px] text-muted" title={`Last update ${v.lastSeen} (Nairobi time)`}>last seen {seenAgo(v.lastSeen)}</span>
+          )}
           {(st === "soon" || (st === "expired" && v.status !== "Expired")) && <Pill className={renewalPill[st]}>{renewalStatus(st)}</Pill>}
         </div>
         <ActionsMenu

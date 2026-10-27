@@ -27,6 +27,8 @@ export type BillingVehicle = {
   technicianName: string | null;
   /** When GPSPlatform was last asked about this device (ISO). */
   checkedAt: string | null;
+  /** When the device last sent data to the platform: "YYYY-MM-DD HH:mm" in Nairobi time; null if never or unknown. */
+  lastSeen: string | null;
   saleId: string;
   soldAt: string;
   /** The SIM's airtime service, and for automatic airtime its approval state. */
@@ -126,4 +128,18 @@ export function nextExpiry(vehicles: BillingVehicle[], today = todayInNairobi())
   if (ahead) return { date: ahead, past: false };
   if (dates.length) return { date: dates[dates.length - 1], past: true };
   return vehicles.length > 0 && vehicles.every((v) => v.cardType === "Lifelong Card") ? "lifelong" : null;
+}
+
+/** "2026-10-27 13:05" (Nairobi time) → "4 h ago" / "12 min ago" / "3 days ago", relative to now. */
+export function seenAgo(lastSeen: string, now = Date.now()): string {
+  const [d, t = "00:00"] = lastSeen.split(" ");
+  const at = Date.parse(`${d}T${t}:00+03:00`);
+  if (Number.isNaN(at)) return "";
+  const min = Math.max(0, Math.round((now - at) / 60_000));
+  if (min < 2) return "just now";
+  if (min < 60) return `${min} min ago`;
+  const h = Math.round(min / 60);
+  if (h < 48) return `${h} h ago`;
+  const days = Math.round(h / 24);
+  return `${days} days ago`;
 }

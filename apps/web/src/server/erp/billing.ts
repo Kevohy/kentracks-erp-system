@@ -20,6 +20,7 @@ import { Reader, throwValidation, type Body } from "./body";
 import { parseMoney } from "@/lib/purchase-validation";
 import { MAX_AMOUNT_MINOR } from "@/lib/sale-validation";
 import { verifyImeisOnServer } from "./gps";
+import { storeGpsDevice } from "./gps-store";
 import { smsReminderInfo } from "./sms-reminder-info";
 import type { SmsReminderInfo } from "@/lib/sales";
 
@@ -79,6 +80,7 @@ type VehicleRow = {
   renewal_text: string | null;
   technician_name: string | null;
   gps_synced_at: string | Date | null;
+  gps_last_seen: string | null;
   sold_at: string | Date;
   sms_reminder: boolean;
   auto_recharge: boolean;
@@ -111,6 +113,7 @@ function toVehicle(r: VehicleRow, reminders?: Map<string, SmsReminderInfo>): Bil
     renewalFeeMinor: r.renewal_text == null ? null : Number(r.renewal_text),
     technicianName: r.technician_name,
     checkedAt: iso(r.gps_synced_at),
+    lastSeen: r.gps_last_seen && /^\d{4}-\d{2}-\d{2}( \d{2}:\d{2})?$/.test(r.gps_last_seen) ? r.gps_last_seen : null,
     saleId: r.sale_id,
     soldAt,
     airtime: r.auto_recharge
@@ -257,16 +260,7 @@ export async function syncBilling(ctx: AuthContext, body: Body): Promise<Billing
       message ??= r.message;
       return;
     }
-    const dev = r.device;
-    await db.execute(sql`
-      UPDATE package_sales SET
-        gps_model = ${dev.model},
-        gps_status = ${dev.status ?? null},
-        gps_activation_date = ${normalizeDate(dev.activationDate)},
-        gps_expiration_date = ${normalizeDate(dev.expirationDate)},
-        gps_synced_at = now()
-      WHERE sale_id = ${d.sale_id}::uuid
-        AND EXISTS (SELECT 1 FROM sales s WHERE s.id = ${d.sale_id}::uuid AND s.tenant_id = ${ctx.tenantId})`);
+    await storeGpsDevice(ctx.tenantId, d.sale_id, r.device);
     checked++;
   });
 

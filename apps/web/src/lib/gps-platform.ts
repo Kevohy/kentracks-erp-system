@@ -192,6 +192,30 @@ export type KentracksDeviceRecord = {
   customeraccount?: unknown;
 };
 
+/**
+ * One record of GET /api/track (Kentracks and iTrack API, "Track": the latest position and status). Times are Unix
+ * seconds. datastatus: 1 never online, 2 OK (online), 3 expired, 4 offline, 5 blocked.
+ */
+export type KentracksTrackRecord = {
+  imei?: unknown;
+  datastatus?: unknown;
+  /** The last time the device sent anything (heartbeat). */
+  hearttime?: unknown;
+  /** The last GPS fix. */
+  gpstime?: unknown;
+  speed?: unknown;
+  accstatus?: unknown;
+};
+
+/**
+ * The device's status from the track API's datastatus: 2 → online, 3 → expired, 1 (never online), 4 (offline) and
+ * 5 (blocked on the platform) → offline, since none of those is sending positions. Anything else is unknown.
+ */
+export function trackStatusText(datastatus: unknown): "online" | "offline" | "expired" | undefined {
+  const d = int(datastatus);
+  return d === 2 ? "online" : d === 3 ? "expired" : d === 1 || d === 4 || d === 5 ? "offline" : undefined;
+}
+
 /** The record of GET /api/user/info (Kentracks API, "Get account information"). */
 export type KentracksUserInfo = {
   account?: unknown;
@@ -236,13 +260,17 @@ export function kentracksTime(v: unknown, withTime = false): string | undefined 
 }
 
 /**
- * A Kentracks device record as the body `normalizeGpsDevice` reads. The detail API has no online/offline status (a
- * later API gives it), so the status is left unknown unless the platform expiration date has passed (Expired).
+ * A Kentracks / iTrack device record as the body `normalizeGpsDevice` reads. The detail API has no online/offline
+ * status: it comes from the track API when given (`track`), else it is left unknown unless the platform expiration
+ * date has passed (Expired).
  */
-export function kentracksToRaw(r: KentracksDeviceRecord, owner?: KentracksUserInfo | null): Record<string, unknown> {
+export function kentracksToRaw(r: KentracksDeviceRecord, owner?: KentracksUserInfo | null, track?: KentracksTrackRecord | null): Record<string, unknown> {
   const name = text(r.devicename);
+  // The last time the device sent anything (its heartbeat, else its last GPS fix); a never-online device has none.
+  const seen = track ? kentracksTime(int(track.hearttime) > 0 ? track.hearttime : track.gpstime, true) : undefined;
   return {
     ...(owner ? kentracksAccountRaw(owner) : {}),
+    ...(track ? { status: trackStatusText(track.datastatus), last_seen: seen } : {}),
     imei: text(r.imei, 20),
     // The model is required; a device without a type still verifies, shown by its name.
     model: text(r.devicetype) ?? name ?? "Unknown model",

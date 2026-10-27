@@ -1,0 +1,1 @@
+ALTER TABLE "package_sales" ADD COLUMN "gps_last_seen" text;

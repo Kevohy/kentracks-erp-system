@@ -2,7 +2,7 @@ import "server-only";
 import { sql } from "drizzle-orm";
 import { airtimeAllowed } from "@/lib/sale-validation";
 import { SIM_SERVICES, simServiceOf, type Sale, type SimService } from "@/lib/sales";
-import type { AuthContext } from "../crm/auth";
+import { requireAdmin, type AuthContext } from "../crm/auth";
 import { getDb } from "../crm/db";
 import { isUuid } from "../crm/http";
 import { Reader, throwValidation, type Body } from "./body";
@@ -39,6 +39,12 @@ export async function applyServiceChange(ctx: AuthContext, saleId: string, chang
   if (from === change.to) throwValidation({ service: `This sale already has: ${from}` });
   if (change.to !== "None" && !airtimeAllowed(cur.sale_type, cur.sim_type)) {
     throwValidation({ service: `A ${cur.sim_type} SIM on a ${cur.sale_type} cannot have airtime services (only prepaid SIMs, or a non-IoT SIM on a Hosting Sale).` });
+  }
+  // Leaving automatic airtime deletes its approved plan, and approving or stopping a plan is an administrator's job
+  // (Communication → Airtime): staff could otherwise undo an approval from the sale's details.
+  if (from === "Automatic airtime recharge" && change.to !== from) {
+    const plan = await getDb().execute(sql`SELECT 1 FROM airtime_plans WHERE sale_id = ${saleId}::uuid AND tenant_id = ${ctx.tenantId}`);
+    if (plan.rows.length) requireAdmin(ctx, "stop an approved automatic airtime plan");
   }
   const by = isUuid(ctx.userId) ? ctx.userId : null;
   await getDb().transaction(async (tx) => {
