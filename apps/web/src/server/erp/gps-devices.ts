@@ -6,6 +6,7 @@ import {
   validateImei,
   type GpsPlatformClient,
   type KentracksDeviceRecord,
+  type KentracksTrackRecord,
   type KentracksUserInfo,
   type VerifyOutcome,
 } from "@/lib/gps-platform";
@@ -32,6 +33,14 @@ import { GpsAuthError, gpsFetch, invalidateAccessToken, platformAccounts, platfo
  * Its contact details are matched against the CRM (or offered as a new customer). It is asked with the API account
  * that found the device, at most once per owner per verification, and remembered for a few minutes. If it fails the
  * IMEI is still verified, just without contact details.
+ *
+ * "Track" (Kentracks and iTrack section 2.2) — the device's live status and when it last sent data:
+ *
+ *   GET {platform}/api/track?access_token={token}&imeis={imei,imei,…}   (at most 100 IMEIs per request)
+ *   → { "code": 0, "record": [ { imei, datastatus, hearttime, gpstime, … }, … ] }
+ *
+ * datastatus 2 is Online, 3 Expired, 1 (never online), 4 (offline) and 5 (blocked) Offline. It is asked with the account
+ * that found each device. If it fails the devices are still verified, with their status unknown.
  */
 
 export const KENTRACKS_BATCH = 100;
@@ -92,6 +101,38 @@ async function detail(c: GpsCredentials, imeis: string[]): Promise<KentracksDevi
   const r = await askSigned(c, "/api/device/detail", { imeis: imeis.join(",") });
   if (r.code !== 0) throw new GpsPlatformError("api-error", `${platformName(c.platform)} refused the device request (code ${r.code})${r.message ? `: ${r.message}` : ""}.`);
   return Array.isArray(r.record) ? (r.record.filter((x) => x && typeof x === "object") as KentracksDeviceRecord[]) : [];
+}
+
+/** One account, one batch of at most 100 IMEIs: the live status records, by IMEI. */
+async function track(c: GpsCredentials, imeis: string[]): Promise<Map<string, KentracksTrackRecord>> {
+  // The device lookup just used this token, so one try: a refusal here should not replace the token others are using.
+  const r = await ask(c, "/api/track", { access_token: await token(c), imeis: imeis.join(",") });
+  if (r.code !== 0) throw new GpsPlatformError("api-error", `${platformName(c.platform)} refused the status request (code ${r.code}).`);
+  const out = new Map<string, KentracksTrackRecord>();
+  for (const x of Array.isArray(r.record) ? r.record : []) {
+    if (!x || typeof x !== "object") continue;
+    const rec = x as KentracksTrackRecord;
+    const imei = typeof rec.imei === "string" ? rec.imei.trim() : String(rec.imei ?? "");
+    if (imeis.includes(imei)) out.set(imei, rec);
+  }
+  return out;
+}
+
+/** The live status of the found devices, asked with the account that found each one. Failures leave them unknown. */
+async function statuses(found: Found): Promise<Map<string, KentracksTrackRecord>> {
+  const byAccount = new Map<GpsCredentials, string[]>();
+  for (const [imei, { by }] of found) byAccount.set(by, [...(byAccount.get(by) ?? []), imei]);
+  const out = new Map<string, KentracksTrackRecord>();
+  await Promise.all([...byAccount].map(async ([c, imeis]) => {
+    for (let i = 0; i < imeis.length; i += KENTRACKS_BATCH) {
+      try {
+        for (const [imei, rec] of await track(c, imeis.slice(i, i + KENTRACKS_BATCH))) out.set(imei, rec);
+      } catch {
+        // The status stays unknown for these devices; their details are still verified.
+      }
+    }
+  }));
+  return out;
 }
 
 // Owner details, remembered briefly per API account and owner so a verify followed by the sale's own check asks once.
@@ -194,6 +235,7 @@ export async function verifyImeis(
   }
 
   const { found, error } = await lookUp(accounts, valid);
+  const live = found.size ? await statuses(found) : new Map<string, KentracksTrackRecord>();
   const ownerOf = new Map<string, KentracksUserInfo | null>();
   if (withOwner) {
     const pairs = new Map<string, { by: GpsCredentials; account: string }>();
@@ -213,9 +255,9 @@ export async function verifyImeis(
       continue;
     }
     const owner = typeof rec.customeraccount === "string" && rec.customeraccount.trim() ? ownerOf.get(`${hit.by.platform}|${hit.by.account}|${rec.customeraccount.trim().toLowerCase()}`) : null;
-    const parsed = normalizeGpsDevice({ ...kentracksToRaw(rec, owner), platform: platformName(hit.by.platform) });
+    const parsed = normalizeGpsDevice({ ...kentracksToRaw(rec, owner, live.get(imei)), platform: platformName(hit.by.platform) });
     out.set(imei, parsed && parsed.device.imei === imei
-      // The detail API has no "last update" (a later API gives live status), so it is not reported as missing.
+      // "Last update" comes from the track API and a device that never went online has none: not reported as missing.
       ? { ok: true, device: parsed.device, missing: parsed.missing.filter((m) => m !== "Last Update"), source: "gpsplatform" }
       : { ok: false, code: "incomplete-response", message: `${platformName(hit.by.platform)} returned an incomplete record for this IMEI, so it could not be verified.` });
   }

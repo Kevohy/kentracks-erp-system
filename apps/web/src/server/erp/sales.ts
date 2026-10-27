@@ -407,6 +407,7 @@ async function createPackageSale(ctx: AuthContext, body: Body, kind: "Package Sa
             gpsStatus: verification.device.status ?? null,
             gpsActivationDate: normalizeDate(verification.device.activationDate),
             gpsExpirationDate: normalizeDate(verification.device.expirationDate),
+            gpsLastSeen: verification.device.lastSeen && /^\d{4}-\d{2}-\d{2}( \d{2}:\d{2})?$/.test(verification.device.lastSeen) ? verification.device.lastSeen : null,
             gpsSyncedAt: new Date(),
           }
         : {}),

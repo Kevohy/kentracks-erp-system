@@ -260,6 +260,13 @@
       "when": 1792999625188,
       "tag": "0036_protrack_orange",
       "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1793110039871,
+      "tag": "0037_gps_last_seen",
+      "breakpoints": true
     }
   ]
 }
