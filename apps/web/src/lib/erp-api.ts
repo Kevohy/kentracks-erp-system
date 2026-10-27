@@ -20,7 +20,7 @@ import type { BillingPeriod, IotBill, IotClientsPage, IotGroupsResult, IotOvervi
 export type { StockRow } from "./purchases";
 import type { StockRow } from "./purchases";
 import type { Certificate, CertificateCustomer, CertificateDraft, CustomerVehicle } from "./certificates";
-import type { Invoice, InvoiceSale, InvoiceStatus } from "./invoices";
+import type { Invoice, InvoiceSale, InvoiceStatus, PaymentOptions } from "./invoices";
 import type { Monitoring } from "./monitoring";
 
 export const erpApi = {
@@ -35,7 +35,7 @@ export const erpApi = {
     list: () => call<Invoice[]>("GET", "/api/invoices"),
     get: (id: string) => call<Invoice>("GET", `/api/invoices/${id}`),
     sales: (customerId: string) => call<InvoiceSale[]>("GET", `/api/invoices/customers/${customerId}/sales`),
-    paymentDefaults: (brandId: string) => call<{ id: string; paymentMethod: string; paymentDetails: string }>("GET", `/api/invoices/payment-defaults/${brandId}`),
+    paymentDefaults: (brandId: string) => call<{ id: string; found: boolean; paymentMethod: string; paymentDetails: string; paymentOptions: PaymentOptions }>("GET", `/api/invoices/payment-defaults/${brandId}`),
     create: (d: unknown) => call<Invoice>("POST", "/api/invoices", d),
     setStatus: (id: string, status: InvoiceStatus) => call<Invoice>("PUT", `/api/invoices/${id}`, { status }),
   },

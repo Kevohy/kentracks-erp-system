@@ -79,11 +79,11 @@ function StatusPill({ status }: { status: BillingVehicle["status"] }) {
 
 // ---------------------------------------------------------------- vehicle
 
-function Field({ label, children, mono, className }: { label: string; children: ReactNode; mono?: boolean; className?: string }) {
+function Field({ label, children, mono, className, nowrap }: { label: string; children: ReactNode; mono?: boolean; className?: string; nowrap?: boolean }) {
   return (
     <div className={cn("min-w-0", className)}>
-      <dt className="text-[11px] font-medium uppercase tracking-wide text-muted">{label}</dt>
-      <dd className={cn("mt-0.5 truncate text-[13.5px] font-semibold", mono && "font-mono text-[13px] font-medium")}>{children}</dd>
+      <dt className="text-[11.5px] font-medium text-muted">{label}</dt>
+      <dd className={cn("mt-0.5 text-[14px] font-semibold", nowrap ? "whitespace-nowrap" : "truncate", mono && "font-mono text-[13px] font-medium")}>{children}</dd>
     </div>
   );
 }
@@ -96,8 +96,19 @@ const accent: Record<ExpiryState, string> = {
   lifelong: "before:bg-navy",
   unknown: "before:bg-[#B8C3CC]",
 };
+const bar: Record<ExpiryState, string> = {
+  expired: "bg-[#D93025]", soon: "bg-[#E8890C]", active: "bg-[#2E7D32]", lifelong: "bg-navy", unknown: "bg-[#B8C3CC]",
+};
 
-/** One vehicle, kept compact so a customer with many vehicles still reads at a glance. */
+/** How much of the licence is left, 0–1, from the activation and expiry dates (null when either is missing). */
+function licenceLeft(v: BillingVehicle, today: string): number | null {
+  if (!v.activationDate || !v.expirationDate) return null;
+  const span = daysUntil(v.expirationDate, v.activationDate);
+  if (span <= 0) return null;
+  return Math.min(1, Math.max(0, daysUntil(v.expirationDate, today) / span));
+}
+
+/** One vehicle: plate and live status on top, the facts in a grid that flows to the card's width, then airtime and the device line. */
 function VehicleCard({ v, today, onViewSale, onCopy, onRefresh, refreshing, onEditFee }: {
   v: BillingVehicle; today: string; onViewSale: () => void; onCopy: (what: string, text: string) => void; onRefresh: () => void; refreshing: boolean;
   /** Present when a renewal fee applies (not for a Lifelong Card). */
@@ -105,17 +116,18 @@ function VehicleCard({ v, today, onViewSale, onCopy, onRefresh, refreshing, onEd
 }) {
   const st = expiryState(v, today);
   const d = v.expirationDate ? daysUntil(v.expirationDate, today) : null;
-  const rel = d === null ? "" : d < 0 ? `${plural(-d, "day")} ago` : d === 0 ? "today" : `in ${plural(d, "day")}`;
+  const rel = d === null ? "" : d < 0 ? `${plural(-d, "day")} ago` : d === 0 ? "today" : `${plural(d, "day")} left`;
+  const left = st === "lifelong" ? null : licenceLeft(v, today);
   return (
     <article aria-label={`Vehicle ${v.vehiclePlate || v.imei}`}
-      className={cn("relative min-w-0 rounded-xl border border-line bg-white pl-1 before:absolute before:inset-y-0 before:left-0 before:w-1 before:rounded-l-xl", accent[st])}>
-      <div className="flex items-center gap-2 px-3.5 pb-1.5 pt-2.5">
-        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1">
-          <h3 className="whitespace-nowrap text-[15px] font-semibold">{v.vehiclePlate || "No plate"}</h3>
+      className={cn("relative flex min-w-0 flex-col overflow-hidden rounded-xl border border-line bg-white pl-1 shadow-[0_1px_2px_rgba(16,32,48,0.04)] before:absolute before:inset-y-0 before:left-0 before:w-1", accent[st])}>
+      <header className="flex items-start gap-2 px-4 pb-2 pt-3">
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1.5">
+          <h3 className="whitespace-nowrap text-[16px] font-semibold tracking-[-0.2px]">{v.vehiclePlate || "No plate"}</h3>
           {v.deviceModel && <span className="truncate rounded-md bg-canvas px-1.5 py-0.5 text-[12px] font-medium text-[#3d4b57]">{v.deviceModel}</span>}
           <StatusPill status={v.status} />
           {v.status === "Offline" && v.lastSeen && (
-            <span className="whitespace-nowrap text-[12px] text-muted" title={`Last update ${v.lastSeen} (Nairobi time)`}>last seen {seenAgo(v.lastSeen)}</span>
+            <span className="whitespace-nowrap text-[12.5px] text-muted" title={`Last update ${v.lastSeen} (Nairobi time)`}>last seen {seenAgo(v.lastSeen)}</span>
           )}
           {(st === "soon" || (st === "expired" && v.status !== "Expired")) && <Pill className={renewalPill[st]}>{renewalStatus(st)}</Pill>}
         </div>
@@ -130,82 +142,93 @@ function VehicleCard({ v, today, onViewSale, onCopy, onRefresh, refreshing, onEd
             ...(v.simNumber ? [{ label: "Copy SIM number", icon: Copy, onSelect: () => onCopy("SIM number", v.simNumber) }] : []),
           ]}
         />
-      </div>
-      <dl className="grid grid-cols-2 gap-x-4 gap-y-2 px-3.5 pb-2.5 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.45fr)_minmax(0,1fr)]">
+      </header>
+
+      <dl className="grid grid-cols-[repeat(auto-fill,minmax(130px,1fr))] gap-x-4 gap-y-3 px-4 pb-3">
         <Field label="Package">
           {v.packageName}
-          <span className="font-normal text-muted"> · {v.cardType.replace(" Card", "")}{v.saleType === "Hosting Sale" ? " · Hosting" : ""}</span>
+          {v.saleType === "Hosting Sale" && <span className="font-normal text-muted"> · Hosting</span>}
         </Field>
-        <Field label="SIM" className="order-last col-span-2 sm:order-none sm:col-span-1">
-          <span className="font-mono font-medium">{v.simNumber || "—"}</span>
+        <Field label="SIM">
+          <span className="font-mono text-[13px] font-medium">{v.simNumber || "—"}</span>
           {v.simType && <span className="font-normal text-muted"> · {v.simType}</span>}
         </Field>
         <Field label="GPS account">{v.gpsAccount || dash}</Field>
         <Field label="Activated">{v.activationDate ? longDate(v.activationDate) : dash}</Field>
         <Field label="Expires">
           {st === "lifelong" ? <span className="text-navy">Lifelong</span> : v.expirationDate ? (
-            <span className={cn(st === "expired" && "text-[#B71C1C]", st === "soon" && "text-[#9a3300]")}>
-              {longDate(v.expirationDate)}{st !== "active" && <span className="font-normal"> ({rel})</span>}
-            </span>
+            <>
+              <span className={cn(st === "expired" && "text-[#B71C1C]", st === "soon" && "text-[#9a3300]")}>{longDate(v.expirationDate)}</span>
+              <span className={cn("mt-0.5 block text-[12px] font-medium", st === "expired" ? "text-[#B71C1C]" : st === "soon" ? "text-[#9a3300]" : "text-muted")}>{rel}</span>
+              {left !== null && (
+                <span className="mt-1 block h-1 w-full max-w-[140px] overflow-hidden rounded-full bg-[#EEF2F5]" role="img" aria-label={`${Math.round(left * 100)}% of the licence left`}>
+                  <span className={cn("block h-full rounded-full", bar[st])} style={{ width: `${Math.max(left > 0 ? 4 : 0, left * 100)}%` }} />
+                </span>
+              )}
+            </>
           ) : dash}
         </Field>
-        <Field label="Platform renewal fee">
-          <span className="inline-flex max-w-full items-center gap-1">
-            <span className="truncate">{v.renewalFeeMinor != null ? formatKes(v.renewalFeeMinor) : v.cardType === "Lifelong Card" ? <span className="font-normal text-muted">None</span> : <span className="font-normal text-muted">Not set</span>}</span>
-            {onEditFee && (
-              <button type="button" onClick={onEditFee} aria-label={`Edit renewal fee for ${v.vehiclePlate || v.imei}`}
-                className="-my-1 grid size-7 shrink-0 place-items-center rounded-md text-navy hover:bg-tint">
-                <Pencil size={13} aria-hidden="true" />
-              </button>
-            )}
-          </span>
-        </Field>
-        <Field label="Airtime service" className="col-span-2 sm:col-span-3">
-          {v.airtime.service === "None" ? <span className="font-normal text-muted">None</span> : (
-            <span className="inline-flex flex-wrap items-center gap-1.5">
-              {v.airtime.service === "SMS reminder" ? "SMS reminder" : "Automatic airtime"}
-              {v.airtime.status && (
-                <span className={cn("rounded-full px-2 py-0.5 text-[11.5px] font-semibold",
-                  v.airtime.status === "Active" ? "bg-[#E6F4EA] text-[#1B5E20]"
-                    : v.airtime.status === "Suspended" ? "bg-[#EEF1F4] text-[#3d4b57]"
-                      : v.airtime.status === "Suspended (device expired)" ? "bg-[#FDECEA] text-[#B71C1C]" : "bg-[#FFF4E5] text-[#9a3300]")}>
-                  {v.airtime.status}
-                </span>
-              )}
-              {v.airtime.reminder && (
-                <span className={cn("rounded-full px-2 py-0.5 text-[11.5px] font-semibold", v.airtime.reminder.status === "Due" ? "bg-[#FFF1EA] text-brand" : "bg-[#E6F4EA] text-[#1B5E20]")}>
-                  {v.airtime.reminder.status === "Due" ? "Reminder due this month" : "Reminder sent this month"}
-                </span>
-              )}
-              {v.airtime.reminder?.recent[0] && (
-                <span className="text-[12px] font-normal text-muted">Last {longDate(new Date(Date.parse(v.airtime.reminder.recent[0].at) + 3 * 3_600_000).toISOString().slice(0, 10))}</span>
-              )}
-            </span>
-          )}
+        <Field label="Renewal fee" nowrap>
+          {v.renewalFeeMinor != null ? formatKes(v.renewalFeeMinor) : <span className="font-normal text-muted">{v.cardType === "Lifelong Card" ? "None" : "Not set"}</span>}
         </Field>
       </dl>
-      <div className="flex items-center gap-2 border-t border-line px-3.5 py-1.5 text-[12px] text-muted">
-        <span className="min-w-0 truncate">
-          <span className="font-mono text-ink">{v.imei}</span>
-          {" · "}{v.platformName}{v.technicianName ? ` · Installed by ${v.technicianName}` : ""}{` · Sold ${longDate(v.soldAt.slice(0, 10))}`}
+
+      <div className="mx-4 mb-3 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg bg-canvas/70 px-3 py-2 text-[13px]">
+        <span className="text-muted">Airtime</span>
+        {v.airtime.service === "None" ? <span className="text-muted">None</span> : (
+          <>
+            <span className="font-semibold">{v.airtime.service === "SMS reminder" ? "SMS reminder" : "Automatic airtime"}</span>
+            {v.airtime.status && (
+              <span className={cn("rounded-full px-2 py-0.5 text-[11.5px] font-semibold",
+                v.airtime.status === "Active" ? "bg-[#E6F4EA] text-[#1B5E20]"
+                  : v.airtime.status === "Suspended" ? "bg-[#EEF1F4] text-[#3d4b57]"
+                    : v.airtime.status === "Suspended (device expired)" ? "bg-[#FDECEA] text-[#B71C1C]" : "bg-[#FFF4E5] text-[#9a3300]")}>
+                {v.airtime.status}
+              </span>
+            )}
+            {v.airtime.reminder && (
+              <span className={cn("rounded-full px-2 py-0.5 text-[11.5px] font-semibold", v.airtime.reminder.status === "Due" ? "bg-[#FFF1EA] text-brand" : "bg-[#E6F4EA] text-[#1B5E20]")}>
+                {v.airtime.reminder.status === "Due" ? "Reminder due this month" : "Reminder sent this month"}
+              </span>
+            )}
+            {v.airtime.reminder?.recent[0] && (
+              <span className="text-[12px] text-muted">Last {longDate(new Date(Date.parse(v.airtime.reminder.recent[0].at) + 3 * 3_600_000).toISOString().slice(0, 10))}</span>
+            )}
+          </>
+        )}
+      </div>
+
+      <footer className="mt-auto flex items-center gap-2 border-t border-line px-4 py-1.5 text-[12px] text-muted">
+        <button type="button" onClick={() => onCopy("IMEI", v.imei)} aria-label={`Copy IMEI ${v.imei}`} title="Copy IMEI"
+          className="-ml-1.5 inline-flex min-h-8 shrink-0 items-center gap-1.5 rounded-md px-1.5 font-mono text-ink hover:bg-tint">
+          {v.imei}
+          <Copy size={13} className="text-navy" aria-hidden="true" />
+        </button>
+        <span className="-ml-1 min-w-0 truncate">
+          {"· "}{v.platformName}{v.technicianName ? ` · Installed by ${v.technicianName}` : ""}{` · Sold ${longDate(v.soldAt.slice(0, 10))}`}
         </span>
         <button type="button" onClick={onViewSale} className="ml-auto inline-flex min-h-8 shrink-0 items-center gap-1 rounded-md px-1.5 font-semibold text-navy hover:bg-tint">
           <Eye size={13} aria-hidden="true" />
           View sale
         </button>
-      </div>
+      </footer>
     </article>
   );
 }
 
 // --------------------------------------------------------------- customer
 
-function StatBox({ value, label, className }: { value: number; label: string; className: string }) {
+/** The customer's counts as one compact strip; a zero is greyed so the numbers that matter stand out. */
+function StatStrip({ items }: { items: { value: number; label: string; className: string }[] }) {
   return (
-    <div className="flex min-w-0 flex-col items-center justify-center rounded-xl border border-line bg-white px-0.5 py-2 sm:w-[86px] sm:px-2">
-      <span className={cn("text-[18px] font-semibold leading-none tabular-nums", className)}>{n(value)}</span>
-      <span className="mt-1.5 max-w-full truncate text-[9px] font-semibold uppercase text-muted sm:text-[10.5px] sm:tracking-wide">{label}</span>
-    </div>
+    <dl className="grid flex-1 grid-cols-5 divide-x divide-line overflow-hidden rounded-xl border border-line bg-white sm:flex sm:flex-none">
+      {items.map((s) => (
+        <div key={s.label} className="flex min-w-0 flex-col items-center justify-center px-1 py-2 sm:w-[78px]">
+          <dt className="order-last mt-1.5 max-w-full truncate text-[9.5px] font-semibold uppercase text-muted sm:text-[10.5px] sm:tracking-wide">{s.label}</dt>
+          <dd className={cn("text-[18px] font-semibold leading-none tabular-nums", s.value ? s.className : "text-[#B8C3CC]")}>{n(s.value)}</dd>
+        </div>
+      ))}
+    </dl>
   );
 }
 
@@ -257,13 +280,13 @@ function CustomerCard({ c, open, onToggle, filter, today, syncing, onRefresh, on
           <div className="lg:hidden">{menu}</div>
         </div>
         <div className="flex items-center gap-2">
-          <div className="grid flex-1 grid-cols-5 gap-1.5 sm:flex sm:flex-none sm:gap-2">
-            <StatBox value={c.vehicles.length} label="Vehicles" className={tone.money} />
-            <StatBox value={count("Online")} label="Online" className={tone.online} />
-            <StatBox value={count("Offline")} label="Offline" className={tone.offline} />
-            <StatBox value={count("Expired")} label="Expired" className={tone.expired} />
-            <StatBox value={count("Expiring soon")} label="Expiring" className={tone.soon} />
-          </div>
+          <StatStrip items={[
+            { value: c.vehicles.length, label: "Vehicles", className: tone.money },
+            { value: count("Online"), label: "Online", className: tone.online },
+            { value: count("Offline"), label: "Offline", className: tone.offline },
+            { value: count("Expired"), label: "Expired", className: tone.expired },
+            { value: count("Expiring soon"), label: "Expiring", className: tone.soon },
+          ]} />
           <div className="hidden lg:block">{menu}</div>
         </div>
       </div>
@@ -283,7 +306,7 @@ function CustomerCard({ c, open, onToggle, filter, today, syncing, onRefresh, on
               ) : null}
             </div>
           )}
-          <div className="grid gap-2.5 xl:grid-cols-2">
+          <div className="grid gap-3 [grid-template-columns:repeat(auto-fit,minmax(min(100%,440px),1fr))]">
           {shown.map((v) => (
               <VehicleCard key={v.imei} v={v} today={today} refreshing={syncing} onRefresh={onRefresh} onCopy={onCopy} onViewSale={() => onViewSale(v.saleId)}
                 onEditFee={v.cardType !== "Lifelong Card" ? () => onEditFee(v) : undefined} />
@@ -530,7 +553,7 @@ export function BillingVehiclesView({ initialFilter = "All" }: { initialFilter?:
             <span className="absolute inline-flex size-full animate-ping rounded-full bg-brand opacity-60" />
             <span className="relative inline-flex size-2.5 rounded-full bg-brand" />
           </span>
-          Live status · auto-refreshes every {LIVE_REFRESH_SECONDS}s{updatedAt && <> · updated {clock(updatedAt)}</>}
+          Live status · refreshes from the GPS platform every {LIVE_REFRESH_SECONDS >= 60 ? `${LIVE_REFRESH_SECONDS / 60} min` : `${LIVE_REFRESH_SECONDS}s`}{updatedAt && <> · updated {clock(updatedAt)}</>}
         </p>
         <button type="button" disabled={items.length === 0 || anySyncing} onClick={() => void sync(items.map((c) => c.id).slice(0, 50), true)}
           className="inline-flex min-h-11 items-center gap-2 rounded-xl border border-line bg-white px-4 text-[15px] font-semibold hover:bg-canvas disabled:opacity-60">

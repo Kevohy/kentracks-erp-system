@@ -42,6 +42,24 @@ function Card({ children, style }: { children: ReactNode; style?: CSSProperties 
 
 const label: CSSProperties = { fontSize: 10, fontWeight: 700, letterSpacing: "0.14em", textTransform: "uppercase", color: INK };
 
+/** One way to pay: a small heading, then label / value rows. */
+function PayBlock({ title, rows }: { title: string; rows: [string, string][] }) {
+  const shown = rows.filter(([, v]) => v);
+  return (
+    <div style={{ breakInside: "avoid" }}>
+      <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: ACCENT }}>{title}</div>
+      <div style={{ display: "grid", gridTemplateColumns: "88px 1fr", columnGap: 8, rowGap: 1, marginTop: 4, fontSize: 11.5, lineHeight: 1.55 }}>
+        {shown.map(([k, v]) => (
+          <div key={k} style={{ display: "contents" }}>
+            <span style={{ color: MUTED }}>{k}</span>
+            <span style={{ color: INK, fontWeight: 600, overflowWrap: "anywhere" }}>{v}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function DetailRow({ name, value, last }: { name: string; value: string; last?: boolean }) {
   return (
     <div style={{ display: "flex", justifyContent: "space-between", gap: 16, padding: "7px 0", borderBottom: last ? "none" : `1px solid ${LINE}`, fontSize: 12.5 }}>
@@ -62,6 +80,8 @@ export function InvoiceDocument({ inv }: { inv: InvoiceView }) {
   const paid = inv.status === "Paid";
   const due = paid ? 0 : inv.totalMinor;
   const b = inv.brand;
+  const o = inv.paymentOptions ?? { paybill: null, sendMoney: null, bank: null };
+  const payOptions = !!(o.paybill || o.sendMoney || o.bank);
   const subtotal = inv.itemsMinor + inv.expensesMinor;
 
   const th: CSSProperties = { padding: "11px 14px", fontSize: 10, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: "#fff" };
@@ -155,6 +175,22 @@ export function InvoiceDocument({ inv }: { inv: InvoiceView }) {
       <div data-keep style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginTop: 18, alignItems: "start" }}>
         <Card style={{ padding: "16px 16px 18px" }}>
           <div style={label}>Payment instructions</div>
+          {payOptions ? (
+            <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 10 }}>
+              {o.paybill && <PayBlock title="M-Pesa Paybill" rows={[["Paybill no.", o.paybill.business], ["Account no.", o.paybill.account], ["Account name", o.paybill.accountName]]} />}
+              {o.sendMoney && <PayBlock title="M-Pesa Send Money" rows={[["Phone no.", phoneText(o.sendMoney.phone)], ["Name", o.sendMoney.name]]} />}
+              {o.bank && (
+                <PayBlock title="Bank transfer" rows={[
+                  ["Account name", o.bank.accountName], ["Account no.", o.bank.accountNo], ["Bank", o.bank.bankName],
+                  ["Branch", o.bank.branch], ["Bank code", o.bank.bankCode], ["SWIFT code", o.bank.swift],
+                ]} />
+              )}
+              <div style={{ fontSize: 11.5, color: MUTED, lineHeight: 1.6 }}>
+                {inv.paymentDetails && <div>{inv.paymentDetails}</div>}
+                <div>Amount: <span style={{ color: INK, fontWeight: 700 }}>{formatKes(inv.totalMinor)}</span></div>
+              </div>
+            </div>
+          ) : (
           <div style={{ fontSize: 11.5, color: MUTED, marginTop: 9, lineHeight: 1.7 }}>
             {inv.paymentMethod && inv.paymentDetails && <div>{inv.paymentMethod}: {inv.paymentDetails}</div>}
             {!inv.paymentMethod && inv.paymentDetails && <div>{inv.paymentDetails}</div>}
@@ -162,6 +198,7 @@ export function InvoiceDocument({ inv }: { inv: InvoiceView }) {
             {inv.paymentMethod && <div>Payment method: {inv.paymentMethod.toUpperCase()}</div>}
             {!inv.paymentMethod && !inv.paymentDetails && b.phone && <div>Call {phoneText(b.phone)} to arrange payment.</div>}
           </div>
+          )}
           <div style={{ display: "flex", alignItems: "center", gap: 14, marginTop: 14 }}>
             <div style={{ background: "#fff", padding: 5, borderRadius: 4, flexShrink: 0 }}>
               {/* eslint-disable-next-line @next/next/no-img-element */}

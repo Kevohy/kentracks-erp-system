@@ -85,6 +85,8 @@ export type PackageSale = {
   stockTaken: StockTaken[];
   /** Recorded after the fact for tracking only: no stock taken, no money, left out of revenue and profit. */
   oldSale: boolean;
+  /** Old sales only: the price it was sold for back then, if known. For reference only: never revenue, profit or a balance. */
+  oldPriceMinor: number | null;
 };
 
 export type RetailerProductLine = {

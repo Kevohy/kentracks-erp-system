@@ -1,0 +1,2 @@
+ALTER TABLE "sales" ADD COLUMN "old_price_minor" bigint;--> statement-breakpoint
+ALTER TABLE "sales" ADD CONSTRAINT "sales_old_price" CHECK ("sales"."old_price_minor" IS NULL OR ("sales"."old_sale" AND "sales"."old_price_minor" > 0));

@@ -73,7 +73,7 @@ export type BillingPage = { items: BillingCustomer[]; nextOffset: number | null;
 export type BillingSyncResult = { items: BillingCustomer[]; checked: number; failed: number; message?: string };
 
 /** The page re-checks device status this often (and a device is not asked again sooner). */
-export const LIVE_REFRESH_SECONDS = 30;
+export const LIVE_REFRESH_SECONDS = 60;
 
 /** "Expiring soon" means within this many days. */
 export const EXPIRY_WINDOW_DAYS = 30;

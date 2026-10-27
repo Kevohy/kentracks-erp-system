@@ -213,7 +213,10 @@ export function SalesView() {
                       {sm.sub && <span className="block truncate font-mono text-[12.5px] text-muted">{sm.sub}</span>}
                     </td>
                     {oldSaleOf(s) ? (
-                      <td colSpan={3} className="px-4 py-3.5 text-right text-[13.5px] text-muted">Not counted in revenue or profit</td>
+                      <td colSpan={3} className="px-4 py-3.5 text-right text-[13.5px] text-muted">
+                        {s.type !== "Retailer Sale" && s.oldPriceMinor != null && <span className="mr-2 font-medium text-ink tabular-nums">Was {formatKes(s.oldPriceMinor)}</span>}
+                        Not counted in revenue or profit
+                      </td>
                     ) : (
                       <>
                         <td className="whitespace-nowrap px-4 py-3.5 text-right tabular-nums">{formatKes(s.totalMinor)}</td>
@@ -279,7 +282,10 @@ export function SalesView() {
                     : <span className={cn("shrink-0 whitespace-nowrap rounded-full px-2.5 py-0.5 text-[12.5px] font-semibold", statusStyle[st])}>{st}</span>}
                 </div>
                 {oldSaleOf(s) ? (
-                  <p className="rounded-xl bg-canvas px-3 py-2.5 text-[13.5px] text-muted">Recorded for tracking only. Not counted in inventory, revenue or profit.</p>
+                  <p className="rounded-xl bg-canvas px-3 py-2.5 text-[13.5px] text-muted">
+                    {s.type !== "Retailer Sale" && s.oldPriceMinor != null && <><span className="font-semibold text-ink tabular-nums">Was {formatKes(s.oldPriceMinor)}</span>{" · "}</>}
+                    Recorded for tracking only. Not counted in inventory, revenue or profit.
+                  </p>
                 ) : (
                 <dl className="grid grid-cols-3 gap-2 rounded-xl bg-canvas px-3 py-2.5 text-[13.5px]">
                   <div className="min-w-0"><dt className="text-[12px] text-muted">Total</dt><dd className="truncate font-medium tabular-nums">{formatKes(s.totalMinor)}</dd></div>

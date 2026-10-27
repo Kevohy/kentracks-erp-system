@@ -331,7 +331,10 @@ export function PackageSaleForm({ kind = "Package Sale" }: { kind?: "Package Sal
             <Detail label="Airtime service" value={[saved.sim.smsReminder && "Monthly airtime alert (SMS)", saved.sim.autoRecharge && "Automatic airtime recharge"].filter(Boolean).join(", ")} />
           )}
           {saved.oldSale ? (
-            <Detail label="Original sale date" value={new Date(saved.createdAt).toLocaleDateString("en-KE", { day: "numeric", month: "short", year: "numeric", timeZone: "Africa/Nairobi" })} />
+            <>
+              <Detail label="Original sale date" value={new Date(saved.createdAt).toLocaleDateString("en-KE", { day: "numeric", month: "short", year: "numeric", timeZone: "Africa/Nairobi" })} />
+              {saved.oldPriceMinor != null && <Detail label="Original price (reference only)" value={formatKes(saved.oldPriceMinor)} />}
+            </>
           ) : (
             <>
               <Detail label="Total" value={formatKes(saved.totalMinor)} />
@@ -536,11 +539,9 @@ export function PackageSaleForm({ kind = "Package Sale" }: { kind?: "Package Sal
                   options={packages.map((p) => ({ value: p.id, label: p.name }))}
                   onChange={(v) => set("packageId", v, "package")} />
               )}
-              {!old && (
-                <TextField id="sale-price" name="price" label="Package price (KES)" value={draft.price} inputMode="decimal" placeholder="0.00"
-                  error={errors.price}
-                  onChange={(v) => set("price", sanitizeNumberInput(v), "price", "paid")} onBlur={() => blur("price", draft.price.trim().length > 0)} />
-              )}
+              <TextField id="sale-price" name="price" label={old ? "Original price (KES, optional)" : "Package price (KES)"} value={draft.price} inputMode="decimal" placeholder="0.00"
+                error={errors.price} hint={old ? "For reference only. Not counted as revenue, profit or a balance owed." : undefined}
+                onChange={(v) => set("price", sanitizeNumberInput(v), "price", "paid")} onBlur={() => blur("price", draft.price.trim().length > 0)} />
             </div>
           </FormSection>
 
